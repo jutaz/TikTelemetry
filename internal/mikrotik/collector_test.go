@@ -400,16 +400,66 @@ func TestInterfaceCollector_RunnerError(t *testing.T) {
 
 func TestDefaultCollectors(t *testing.T) {
 	cs := DefaultCollectors()
-	if len(cs) != 2 {
-		t.Fatalf("DefaultCollectors() returned %d collectors, want 2", len(cs))
+	want := []string{
+		"system", "interface", "health", "dhcp",
+		"connections", "counts", "firewall", "wireless",
 	}
-	names := []string{cs[0].Name(), cs[1].Name()}
-	if names[0] != "system" {
-		t.Errorf("first collector Name() = %q, want system", names[0])
+	if len(cs) != len(want) {
+		t.Fatalf("DefaultCollectors() returned %d collectors, want %d", len(cs), len(want))
 	}
-	if names[1] != "interface" {
-		t.Errorf("second collector Name() = %q, want interface", names[1])
+	for i, w := range want {
+		if cs[i].Name() != w {
+			t.Errorf("collector[%d] Name() = %q, want %q", i, cs[i].Name(), w)
+		}
 	}
+	// Names must be unique.
+	seen := map[string]bool{}
+	for _, c := range cs {
+		if seen[c.Name()] {
+			t.Errorf("duplicate collector name %q", c.Name())
+		}
+		seen[c.Name()] = true
+	}
+}
+
+func TestSelectCollectors(t *testing.T) {
+	// Empty selection returns all defaults.
+	all, unknown := SelectCollectors(nil)
+	if len(all) != len(DefaultCollectors()) {
+		t.Errorf("nil selection returned %d, want all", len(all))
+	}
+	if len(unknown) != 0 {
+		t.Errorf("nil selection unknown = %v, want none", unknown)
+	}
+
+	// Subset selection preserves default order regardless of input order.
+	sel, unknown := SelectCollectors([]string{"interface", "system"})
+	if len(sel) != 2 {
+		t.Fatalf("selected %d, want 2", len(sel))
+	}
+	if sel[0].Name() != "system" || sel[1].Name() != "interface" {
+		t.Errorf("selection order = %q,%q, want system,interface", sel[0].Name(), sel[1].Name())
+	}
+	if len(unknown) != 0 {
+		t.Errorf("unexpected unknown %v", unknown)
+	}
+
+	// Unknown names are reported.
+	sel, unknown = SelectCollectors([]string{"system", "bogus", "nope"})
+	if len(sel) != 1 || sel[0].Name() != "system" {
+		t.Errorf("selected = %v, want [system]", collectorNames(sel))
+	}
+	if len(unknown) != 2 || unknown[0] != "bogus" || unknown[1] != "nope" {
+		t.Errorf("unknown = %v, want [bogus nope]", unknown)
+	}
+}
+
+func collectorNames(cs []Collector) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.Name()
+	}
+	return out
 }
 
 // assertAnError is a sentinel error used by Runner-error propagation tests.
