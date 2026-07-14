@@ -1,9 +1,15 @@
 # Build artifacts
 /tiktelemetry
+/tiktelemetry-armv7
+/tiktelemetry-arm64
 /dist/
 *.exe
 *.test
 *.out
+
+# Offline image tarballs produced by `make image-tar`
+tiktelemetry-*.tar
+tiktelemetry-*.tar.gz
 
 # Local environment / secrets
 .env
