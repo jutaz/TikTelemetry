@@ -1,0 +1,22 @@
+# Build artifacts
+/tiktelemetry
+/dist/
+*.exe
+*.test
+*.out
+
+# Local environment / secrets
+.env
+.env.local
+*.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go
+/vendor/
+coverage.txt
+coverage.html
