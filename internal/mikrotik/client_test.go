@@ -1,11 +1,20 @@
 package mikrotik
 
 import (
+	"context"
+	"io"
+	"log/slog"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/go-routeros/routeros/v3"
 	"github.com/go-routeros/routeros/v3/proto"
+
+	"github.com/jutaz/tiktelemetry/internal/config"
 )
+
+func quietLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func makeReply(n int) *routeros.Reply {
 	re := make([]*proto.Sentence, n)
@@ -51,4 +60,83 @@ func TestCapRows(t *testing.T) {
 			t.Error("nil reply should not report truncation")
 		}
 	})
+}
+
+// TestClientRunDialFailure exercises the real Client.Run dial path (which the
+// fakeRunner bypasses) against an address that refuses connections, verifying
+// the error surfaces and the client stays ready to re-dial on the next call.
+func TestClientRunDialFailure(t *testing.T) {
+	// Bind and immediately close a listener to get a port that refuses.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close() // now nothing is listening on addr
+
+	c := New(config.RouterConfig{
+		Address:     addr,
+		Username:    "admin",
+		Password:    "x",
+		DialTimeout: 500 * time.Millisecond,
+	}, quietLogger())
+	defer func() { _ = c.Close() }()
+
+	// First call must fail to dial.
+	if _, err := c.Run(context.Background(), "/system/resource/print"); err == nil {
+		t.Fatal("expected dial error against a closed port")
+	}
+	// The client must have left itself in a re-dialable state (cli nil), so a
+	// second call also attempts (and fails) rather than panicking on a stale
+	// connection.
+	if _, err := c.Run(context.Background(), "/system/resource/print"); err == nil {
+		t.Fatal("expected second dial to also fail")
+	}
+}
+
+// TestClientRunReconnectsAfterServerClose stands up a TCP server that accepts a
+// connection and then immediately closes it, forcing the go-routeros login to
+// fail. This drives the reconnect branch in Client.Run (close + nil the client
+// on error) using a real *routeros.Client, which the fakeRunner cannot reach.
+func TestClientRunReconnectsAfterServerClose(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	var accepted int
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 2; i++ {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepted++
+			_ = conn.Close() // drop immediately -> login fails
+		}
+	}()
+
+	c := New(config.RouterConfig{
+		Address:     ln.Addr().String(),
+		Username:    "admin",
+		Password:    "x",
+		DialTimeout: time.Second,
+	}, quietLogger())
+	defer func() { _ = c.Close() }()
+
+	// Two calls, each should attempt a fresh connection (proving the client
+	// nils its handle after a failure and re-dials).
+	for i := 0; i < 2; i++ {
+		if _, err := c.Run(context.Background(), "/system/resource/print"); err == nil {
+			t.Errorf("call %d: expected an error when the server drops the connection", i)
+		}
+	}
+
+	<-done
+	if accepted < 1 {
+		t.Errorf("server accepted %d connections, want at least 1 (client did not dial)", accepted)
+	}
 }
