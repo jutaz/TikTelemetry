@@ -48,6 +48,22 @@ jobs:
         with:
           version: latest
 
+  docs:
+    name: Doc references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Validate every #sym: reference in the Markdown docs against the actual
+      # code, so a renamed or removed Go symbol fails CI instead of silently
+      # rotting the documentation. See https://symtether.dev.
+      - name: Verify doc symbol references
+        run: npx --yes symtether@latest check
+
   test:
     name: Unit tests
     runs-on: ubuntu-latest

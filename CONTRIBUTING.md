@@ -49,7 +49,7 @@ scripts/                  RouterOS setup and container deployment scripts.
 
 ## Adding a metric collector
 
-1. Implement the `mikrotik.Collector` interface in `internal/mikrotik/`
+1. Implement the [`Collector`](internal/mikrotik/collector.go#sym:type:Collector) interface in `internal/mikrotik/`
    (a good template is `collectors_extra.go`):
 
    ```go
@@ -67,11 +67,11 @@ scripts/                  RouterOS setup and container deployment scripts.
    }
    ```
 
-2. Register it in `DefaultCollectors()` and add a compile-time interface check.
+2. Register it in [`DefaultCollectors`](internal/mikrotik/collector.go#sym:fn:DefaultCollectors) and add a compile-time interface check.
 
 3. **Be resilient.** If the endpoint may not exist on all hardware (e.g.
    wireless on a CHR), catch the "no such command" error via
-   `isUnavailableCommand` and return `nil, nil` instead of failing the scrape.
+   [`isUnavailableCommand`](internal/mikrotik/collectors_extra.go#sym:fn:isUnavailableCommand) and return `nil, nil` instead of failing the scrape.
 
 4. Add unit tests with the in-package `fakeRunner`, and an e2e assertion in
    `test/e2e/extra_collectors_test.go` (at minimum: the collector must not
@@ -81,19 +81,21 @@ scripts/                  RouterOS setup and container deployment scripts.
 
 ## Adding an exporter
 
-1. Create `internal/export/<name>/` implementing `export.Sink`
-   (`Name`, `Capabilities`, `ConsumeMetrics`, `ConsumeLogs`, `Shutdown`).
+1. Create `internal/export/<name>/` implementing the [`Sink`](internal/export/sink.go#sym:type:Sink)
+   interface (`Name`, `Capabilities`, `ConsumeMetrics`, `ConsumeLogs`, `Shutdown`).
 
-2. Register it in that package's `init()`:
+2. Register it in that package's `init()` with [`Register`](internal/export/sink.go#sym:fn:Register):
 
    ```go
    func init() { export.Register("<name>", New) }
    ```
 
 3. Add a blank import to `internal/exporters/exporters.go` so the registration
-   runs. If it belongs in a convenience bundle, extend an alias there.
+   runs. If it belongs in a convenience bundle, extend an alias with
+   [`RegisterAlias`](internal/export/sink.go#sym:fn:RegisterAlias).
 
-4. Read configuration through `config.Config`'s `Env*` helpers using a unique
+4. Read configuration through [`Config`](internal/config/config.go#sym:type:Config)'s
+   [`Env`](internal/config/config.go#sym:fn:Env) helpers using a unique
    prefix (e.g. `MYSINK_ENDPOINT`).
 
 5. Add tests (an `httptest` server is the usual approach for HTTP push sinks)
@@ -102,10 +104,27 @@ scripts/                  RouterOS setup and container deployment scripts.
 ## Metric naming conventions
 
 - Use dotted, OpenTelemetry-style names: `mikrotik.<area>.<thing>`.
-- Prefer `model.KindCounter` for monotonic cumulative values (byte/packet
-  totals, uptime) and `model.KindGauge` for point-in-time values.
+- Prefer [`KindCounter`](internal/model/model.go#sym:const:KindCounter) for monotonic cumulative values (byte/packet
+  totals, uptime) and [`KindGauge`](internal/model/model.go#sym:const:KindGauge) for point-in-time values.
 - Use UCUM units: `By` (bytes), `%`, `Cel`, `V`, `A`, `W`, `s`, `1`.
 - Put dimensional data in `Attributes`, not in the metric name.
+
+## Documentation references
+
+The docs link to code symbols with [`#sym:` references](https://symtether.dev/spec)
+(e.g. `[Sink](internal/export/sink.go#sym:type:Sink)`). These render as normal
+links on GitHub and are verified against the actual code in CI, so they never
+rot silently.
+
+If you rename or move a symbol referenced from the docs, update the refs:
+
+```sh
+npx symtether check   # list broken references
+npx symtether fix     # propose repairs (add --write to apply)
+```
+
+When documenting code, prefer a `#sym:` link over pasting a snippet or citing a
+line number.
 
 ## Commit style
 

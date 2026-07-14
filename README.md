@@ -521,7 +521,7 @@ It reports the router board/version/architecture it reached and whether each exp
 
 The exporter system is designed to be easy to extend. To add a new backend:
 
-1. **Implement the `export.Sink` interface** in a new package `internal/export/<name>/`. The interface requires four methods:
+1. **Implement the [`Sink`](internal/export/sink.go#sym:type:Sink) interface** in a new package `internal/export/<name>/`. The interface requires five methods:
 
    ```go
    type Sink interface {
@@ -535,7 +535,7 @@ The exporter system is designed to be easy to extend. To add a new backend:
 
    Implement the `Consume*` methods you need; leave the other as a no-op returning `nil`.
 
-2. **Register your factory** in the package's `init()`:
+2. **Register your factory** in the package's `init()` with [`Register`](internal/export/sink.go#sym:fn:Register):
 
    ```go
    func init() {
@@ -548,6 +548,8 @@ The exporter system is designed to be easy to extend. To add a new backend:
    ```go
    _ "github.com/jutaz/tiktelemetry/internal/export/mybackend"
    ```
+
+The agent collects each signal once per scrape and fans it out to every enabled sink through the [`MultiSink`](internal/export/multi.go#sym:type:MultiSink).
 
 That's it. Users can now enable your backend via `EXPORTERS=mybackend`. No other file needs to change.
 
