@@ -5,6 +5,57 @@ import (
 	"time"
 )
 
+func TestMaxReplyRows(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("ROUTER_PASS", "secret")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Router.MaxReplyRows != 10000 {
+			t.Errorf("default MaxReplyRows = %d, want 10000", cfg.Router.MaxReplyRows)
+		}
+	})
+
+	t.Run("custom", func(t *testing.T) {
+		t.Setenv("ROUTER_PASS", "secret")
+		t.Setenv("ROUTER_MAX_REPLY_ROWS", "500")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Router.MaxReplyRows != 500 {
+			t.Errorf("MaxReplyRows = %d, want 500", cfg.Router.MaxReplyRows)
+		}
+	})
+
+	t.Run("zero disables cap", func(t *testing.T) {
+		t.Setenv("ROUTER_PASS", "secret")
+		t.Setenv("ROUTER_MAX_REPLY_ROWS", "0")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Router.MaxReplyRows != 0 {
+			t.Errorf("MaxReplyRows = %d, want 0 (unlimited)", cfg.Router.MaxReplyRows)
+		}
+	})
+
+	t.Run("invalid and negative fall back to default", func(t *testing.T) {
+		for _, v := range []string{"notanumber", "-5"} {
+			t.Setenv("ROUTER_PASS", "secret")
+			t.Setenv("ROUTER_MAX_REPLY_ROWS", v)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Router.MaxReplyRows != 10000 {
+				t.Errorf("MaxReplyRows for %q = %d, want default 10000", v, cfg.Router.MaxReplyRows)
+			}
+		}
+	})
+}
+
 func TestPollInterval_Invalid(t *testing.T) {
 	t.Setenv("ROUTER_PASS", "secret")
 	t.Setenv("POLL_INTERVAL", "notaduration")

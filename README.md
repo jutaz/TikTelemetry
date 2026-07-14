@@ -205,6 +205,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `ROUTER_TLS`          | no       | `false`               | Use API-SSL (port typically 8729)        |
 | `ROUTER_TLS_INSECURE` | no       | `false`               | Skip TLS cert verification               |
 | `ROUTER_DIAL_TIMEOUT` | no       | `5s`                  | Dial timeout (Go duration format)        |
+| `ROUTER_MAX_REPLY_ROWS` | no     | `10000`               | Max rows processed per RouterOS reply (bounds memory from a hostile/large reply; `0` = unlimited) |
 
 ### OTLP exporter (only used when `otlp` in `EXPORTERS`)
 

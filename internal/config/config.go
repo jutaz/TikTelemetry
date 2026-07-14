@@ -10,6 +10,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,6 +69,12 @@ type RouterConfig struct {
 
 	// DialTimeout bounds the initial connection + login handshake.
 	DialTimeout time.Duration
+
+	// MaxReplyRows caps how many rows from a single RouterOS reply the client
+	// will process. It bounds the memory a hostile or malfunctioning router can
+	// force the agent to allocate per scrape, independent of GOMEMLIMIT. Zero
+	// means unlimited.
+	MaxReplyRows int
 }
 
 // Load reads configuration from the environment, applies defaults, and
@@ -84,6 +91,7 @@ func Load() (Config, error) {
 			UseTLS:             getBool(env, "ROUTER_TLS", false),
 			InsecureSkipVerify: getBool(env, "ROUTER_TLS_INSECURE", false),
 			DialTimeout:        getDuration(env, "ROUTER_DIAL_TIMEOUT", 5*time.Second),
+			MaxReplyRows:       getInt(env, "ROUTER_MAX_REPLY_ROWS", 10000),
 		},
 		PollInterval:   getDuration(env, "POLL_INTERVAL", 15*time.Second),
 		ServiceName:    getEnv(env, "SERVICE_NAME", "tiktelemetry"),
@@ -222,4 +230,16 @@ func getDuration(env map[string]string, key string, fallback time.Duration) time
 		return fallback
 	}
 	return d
+}
+
+func getInt(env map[string]string, key string, fallback int) int {
+	v, ok := env[key]
+	if !ok || v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }

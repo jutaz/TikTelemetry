@@ -56,7 +56,30 @@ func (c *Client) Run(ctx context.Context, cmd ...string) (*routeros.Reply, error
 		c.cli = nil
 		return nil, err
 	}
+
+	// Defensive cap: bound how many reply rows we hand downstream so a hostile
+	// or malfunctioning router cannot force unbounded sample generation in a
+	// single scrape. The rows are already read by the library; truncating here
+	// still bounds the (larger) amplification into model.Sample slices.
+	if capRows(reply, c.cfg.MaxReplyRows) {
+		c.logger.Warn("RouterOS reply exceeded the row cap; truncating",
+			"address", c.cfg.Address,
+			"command", cmd[0],
+			"cap", c.cfg.MaxReplyRows,
+		)
+	}
 	return reply, nil
+}
+
+// capRows truncates reply.Re to at most max rows when max > 0. It returns true
+// when truncation occurred, so the caller can log it. A max of 0 (or a nil
+// reply) leaves the reply untouched.
+func capRows(reply *routeros.Reply, max int) bool {
+	if max <= 0 || reply == nil || len(reply.Re) <= max {
+		return false
+	}
+	reply.Re = reply.Re[:max]
+	return true
 }
 
 // dial establishes a new RouterOS API connection. It derives a context with
