@@ -24,6 +24,11 @@ type Config struct {
 	// EXPORTERS env var.
 	Exporters []string
 
+	// Collectors optionally restricts which metric collectors run. When empty,
+	// all registered collectors are used. Populated from the COLLECTORS env var
+	// (comma-separated collector names, e.g. "system,interface,health").
+	Collectors []string
+
 	// PollInterval is how often metrics are collected from the router and
 	// flushed to the backend(s).
 	PollInterval time.Duration
@@ -91,6 +96,10 @@ func Load() (Config, error) {
 	// EXPORTERS is a comma-separated list. Default to "otlp" to preserve the
 	// original single-OTLP behaviour when unset.
 	cfg.Exporters = splitList(getEnv(env, "EXPORTERS", "otlp"))
+
+	// COLLECTORS optionally restricts the active metric collectors. Empty means
+	// "all registered collectors".
+	cfg.Collectors = splitList(env["COLLECTORS"])
 
 	if cfg.InstanceID == "" {
 		cfg.InstanceID = cfg.Router.Address

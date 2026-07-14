@@ -34,11 +34,16 @@ type Agent struct {
 // New constructs an Agent from resolved configuration and the built sinks. The
 // router client is created lazily and connects on first scrape.
 func New(cfg config.Config, logger *slog.Logger, sinks *export.MultiSink) *Agent {
+	collectors, unknown := mikrotik.SelectCollectors(cfg.Collectors)
+	if len(unknown) > 0 {
+		logger.Warn("ignoring unknown collectors in COLLECTORS", "unknown", unknown)
+	}
+
 	a := &Agent{
 		cfg:         cfg,
 		logger:      logger,
 		client:      mikrotik.New(cfg.Router, logger),
-		collectors:  mikrotik.DefaultCollectors(),
+		collectors:  collectors,
 		sinks:       sinks,
 		wantMetrics: sinks.WantsMetrics(),
 		wantLogs:    sinks.WantsLogs(),

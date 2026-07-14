@@ -179,21 +179,10 @@ func (c *interfaceCollector) Collect(ctx context.Context, r Runner) ([]model.Sam
 	return samples, nil
 }
 
-// sampleForInterface creates a model.Sample, cloning attrs so each sample
-// owns its own map.
+// sampleForInterface is retained as a thin alias over sample for the interface
+// collector's call sites.
 func sampleForInterface(name, desc, unit string, kind model.MetricKind, value int64, attrs map[string]string) model.Sample {
-	clone := make(map[string]string, len(attrs))
-	for k, v := range attrs {
-		clone[k] = v
-	}
-	return model.Sample{
-		Name:        name,
-		Description: desc,
-		Unit:        unit,
-		Kind:        kind,
-		Value:       value,
-		Attributes:  clone,
-	}
+	return sample(name, desc, unit, kind, value, attrs)
 }
 
 // ---------------------------------------------------------------------------
@@ -214,20 +203,98 @@ func parseInt(m map[string]string, key string) (int64, bool) {
 	return n, true
 }
 
+// sample builds a model.Sample, cloning attrs so each sample owns its own map.
+func sample(name, desc, unit string, kind model.MetricKind, value int64, attrs map[string]string) model.Sample {
+	var clone map[string]string
+	if len(attrs) > 0 {
+		clone = make(map[string]string, len(attrs))
+		for k, v := range attrs {
+			clone[k] = v
+		}
+	}
+	return model.Sample{
+		Name:        name,
+		Description: desc,
+		Unit:        unit,
+		Kind:        kind,
+		Value:       value,
+		Attributes:  clone,
+	}
+}
+
+// runCount executes a `<path> count-only` command and returns the count from
+// the !done reply's "ret" attribute.
+func runCount(ctx context.Context, r Runner, path string) (int64, bool, error) {
+	reply, err := r.Run(ctx, path, "=count-only=")
+	if err != nil {
+		return 0, false, err
+	}
+	if reply.Done == nil {
+		return 0, false, nil
+	}
+	v, ok := parseInt(reply.Done.Map, "ret")
+	return v, ok, nil
+}
+
 // ---------------------------------------------------------------------------
 // DefaultCollectors
 // ---------------------------------------------------------------------------
 
-// DefaultCollectors returns the standard set of metric collectors.
+// DefaultCollectors returns the standard set of metric collectors, in a stable
+// order.
 func DefaultCollectors() []Collector {
 	return []Collector{
 		&systemResourceCollector{},
 		&interfaceCollector{},
+		&healthCollector{},
+		&dhcpLeaseCollector{},
+		&connectionCollector{},
+		&countsCollector{},
+		&firewallCollector{},
+		&wirelessCollector{},
 	}
+}
+
+// SelectCollectors returns the collectors whose names appear in the given list,
+// preserving DefaultCollectors order. An empty or nil list returns all default
+// collectors. Unknown names are reported so misconfiguration is visible.
+func SelectCollectors(names []string) ([]Collector, []string) {
+	all := DefaultCollectors()
+	if len(names) == 0 {
+		return all, nil
+	}
+
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+
+	var selected []Collector
+	known := map[string]bool{}
+	for _, c := range all {
+		known[c.Name()] = true
+		if want[c.Name()] {
+			selected = append(selected, c)
+		}
+	}
+
+	var unknown []string
+	for _, n := range names {
+		if !known[n] {
+			unknown = append(unknown, n)
+		}
+	}
+	return selected, unknown
 }
 
 // Compile-time interface checks.
 var (
 	_ Collector = (*systemResourceCollector)(nil)
 	_ Collector = (*interfaceCollector)(nil)
+	_ Collector = (*healthCollector)(nil)
+	_ Collector = (*dhcpLeaseCollector)(nil)
+	_ Collector = (*connectionCollector)(nil)
+	_ Collector = (*countsCollector)(nil)
+	_ Collector = (*firewallCollector)(nil)
+	_ Collector = (*wirelessCollector)(nil)
 )
