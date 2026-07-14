@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a new collector, exporter, or capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to achieve? What is missing today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >
+        For a new metric collector, include the RouterOS API path and the
+        fields you want exported. For a new exporter, include the target
+        backend and its ingest protocol.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
