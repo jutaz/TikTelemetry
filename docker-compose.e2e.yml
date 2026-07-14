@@ -1,0 +1,25 @@
+# docker-compose.e2e.yml
+#
+# Spins up a real MikroTik RouterOS (Cloud Hosted Router) under QEMU for
+# end-to-end testing. Use this when you want to run the e2e suite against a
+# long-lived router instead of letting testcontainers manage the lifecycle.
+#
+#   docker compose -f docker-compose.e2e.yml up -d
+#   ROUTEROS_ADDR=127.0.0.1:8728 go test -tags e2e -count=1 ./test/e2e/...
+#   docker compose -f docker-compose.e2e.yml down
+#
+# Default credentials are admin with a blank password. The binary API is
+# enabled by default on CHR and forwarded on 8728.
+services:
+  routeros:
+    image: evilfreelancer/docker-routeros:7
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+      # Uncomment to use hardware acceleration when the host exposes KVM:
+      # - /dev/kvm
+    ports:
+      - "8728:8728" # RouterOS binary API
+      - "8729:8729" # RouterOS API-SSL
