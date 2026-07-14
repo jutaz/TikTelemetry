@@ -395,6 +395,76 @@ func TestInterfaceCollector_RunnerError(t *testing.T) {
 	}
 }
 
+func TestInterfaceCollector_ErrorAndDropCounters(t *testing.T) {
+	runner := &fakeRunner{
+		replies: map[string][]*routeros.Reply{
+			"/interface/print": {
+				replySentences(map[string]string{
+					"name":       "ether1",
+					"running":    "true",
+					"rx-error":   "3",
+					"tx-error":   "1",
+					"rx-drop":    "7",
+					"tx-drop":    "2",
+					"link-downs": "5",
+				}),
+			},
+		},
+	}
+	samples, err := (&interfaceCollector{}).Collect(context.Background(), runner)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	want := map[string]int64{
+		"mikrotik.interface.rx.errors":  3,
+		"mikrotik.interface.tx.errors":  1,
+		"mikrotik.interface.rx.drops":   7,
+		"mikrotik.interface.tx.drops":   2,
+		"mikrotik.interface.link_downs": 5,
+	}
+	for name, wantVal := range want {
+		s := findSample(t, samples, name)
+		if s == nil {
+			t.Errorf("missing %s", name)
+			continue
+		}
+		if s.Value != wantVal {
+			t.Errorf("%s = %d, want %d", name, s.Value, wantVal)
+		}
+		if s.Kind != model.KindCounter {
+			t.Errorf("%s kind = %v, want counter", name, s.Kind)
+		}
+		if s.Attributes["interface"] != "ether1" {
+			t.Errorf("%s missing interface=ether1 attr", name)
+		}
+	}
+}
+
+func TestInterfaceCollector_ErrorCountersAbsent(t *testing.T) {
+	// An interface without error/drop fields emits no such samples (no zeros).
+	runner := &fakeRunner{
+		replies: map[string][]*routeros.Reply{
+			"/interface/print": {
+				replySentences(map[string]string{"name": "ether1", "running": "true"}),
+			},
+		},
+	}
+	samples, err := (&interfaceCollector{}).Collect(context.Background(), runner)
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	for _, name := range []string{
+		"mikrotik.interface.rx.errors", "mikrotik.interface.tx.errors",
+		"mikrotik.interface.rx.drops", "mikrotik.interface.tx.drops",
+		"mikrotik.interface.link_downs",
+	} {
+		if s := findSample(t, samples, name); s != nil {
+			t.Errorf("unexpected %s when field absent", name)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DefaultCollectors
 // ---------------------------------------------------------------------------

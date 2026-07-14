@@ -167,6 +167,29 @@ func (c *interfaceCollector) Collect(ctx context.Context, r Runner) ([]model.Sam
 				"Packets transmitted on interface", "1", model.KindCounter, v, attrs))
 		}
 
+		// Error and drop counters — key health indicators. Present on most
+		// interface types; absent fields are simply skipped.
+		if v, ok := parseInt(s.Map, "rx-error"); ok {
+			samples = append(samples, sampleForInterface("mikrotik.interface.rx.errors",
+				"Receive errors on interface", "1", model.KindCounter, v, attrs))
+		}
+		if v, ok := parseInt(s.Map, "tx-error"); ok {
+			samples = append(samples, sampleForInterface("mikrotik.interface.tx.errors",
+				"Transmit errors on interface", "1", model.KindCounter, v, attrs))
+		}
+		if v, ok := parseInt(s.Map, "rx-drop"); ok {
+			samples = append(samples, sampleForInterface("mikrotik.interface.rx.drops",
+				"Received packets dropped on interface", "1", model.KindCounter, v, attrs))
+		}
+		if v, ok := parseInt(s.Map, "tx-drop"); ok {
+			samples = append(samples, sampleForInterface("mikrotik.interface.tx.drops",
+				"Transmitted packets dropped on interface", "1", model.KindCounter, v, attrs))
+		}
+		if v, ok := parseInt(s.Map, "link-downs"); ok {
+			samples = append(samples, sampleForInterface("mikrotik.interface.link_downs",
+				"Number of times the interface link went down", "1", model.KindCounter, v, attrs))
+		}
+
 		// running field: emit the up gauge for every interface, defaulting to 0.
 		up := int64(0)
 		if s.Map["running"] == "true" {

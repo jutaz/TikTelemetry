@@ -311,6 +311,11 @@ Collectors targeting hardware or features not present on the device (health sens
 | `mikrotik.interface.tx.bytes`         | By   | `interface`, `type`                 | Bytes transmitted on interface           |
 | `mikrotik.interface.rx.packets`       | 1    | `interface`, `type`                 | Packets received on interface            |
 | `mikrotik.interface.tx.packets`       | 1    | `interface`, `type`                 | Packets transmitted on interface         |
+| `mikrotik.interface.rx.errors`        | 1    | `interface`, `type`                 | Receive errors on interface              |
+| `mikrotik.interface.tx.errors`        | 1    | `interface`, `type`                 | Transmit errors on interface             |
+| `mikrotik.interface.rx.drops`         | 1    | `interface`, `type`                 | Received packets dropped on interface    |
+| `mikrotik.interface.tx.drops`         | 1    | `interface`, `type`                 | Transmitted packets dropped on interface |
+| `mikrotik.interface.link_downs`       | 1    | `interface`, `type`                 | Times the interface link went down       |
 | `mikrotik.firewall.filter.bytes`      | By   | `chain`, `action`, `comment` (*)    | Cumulative bytes per firewall rule       |
 | `mikrotik.firewall.filter.packets`    | 1    | `chain`, `action`, `comment` (*)    | Cumulative packets per firewall rule     |
 | `mikrotik.wireguard.rx.bytes`         | By   | `interface`, `comment` (*)          | Bytes received from a WireGuard peer     |
