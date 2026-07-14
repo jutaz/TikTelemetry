@@ -17,6 +17,16 @@ type MultiSink struct {
 	logger *slog.Logger
 }
 
+// NewMultiSink wraps a fixed set of sinks. Build is the usual entry point for
+// production use; this constructor exists for programmatic composition and
+// testing. A nil logger is replaced with a no-op logger.
+func NewMultiSink(logger *slog.Logger, sinks ...Sink) *MultiSink {
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	return &MultiSink{sinks: sinks, logger: logger}
+}
+
 // WantsMetrics reports whether any underlying sink accepts metrics, so the
 // agent can skip metric collection entirely when nothing consumes it.
 func (m *MultiSink) WantsMetrics() bool {

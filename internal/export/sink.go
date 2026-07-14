@@ -160,7 +160,7 @@ func Build(ctx context.Context, cfg config.Config, logger *slog.Logger) (*MultiS
 		)
 	}
 
-	return &MultiSink{sinks: sinks, logger: logger}, nil
+	return NewMultiSink(logger, sinks...), nil
 }
 
 func shutdownAll(ctx context.Context, sinks []Sink) {
