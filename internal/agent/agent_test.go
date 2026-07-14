@@ -28,6 +28,67 @@ func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// TestAgent_CollectorSelection verifies that the COLLECTORS env var restricts
+// which collectors the agent runs, and that log capability drives the log
+// collector's presence.
+func TestAgent_CollectorSelection(t *testing.T) {
+	t.Setenv("ROUTER_PASS", "secret")
+	t.Setenv("COLLECTORS", "system,interface")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	// Metrics + logs capable sink.
+	multi := export.NewMultiSink(quietLogger(),
+		&fakeSink{name: "s", cap: export.Capabilities{Metrics: true, Logs: true}})
+	a := New(cfg, quietLogger(), multi)
+
+	if len(a.collectors) != 2 {
+		t.Errorf("selected %d collectors, want 2", len(a.collectors))
+	}
+	names := map[string]bool{}
+	for _, c := range a.collectors {
+		names[c.Name()] = true
+	}
+	if !names["system"] || !names["interface"] {
+		t.Errorf("expected system and interface collectors, got %v", names)
+	}
+	if a.logColl == nil {
+		t.Error("expected a log collector when a logs-capable sink is present")
+	}
+}
+
+// TestAgent_NoLogCollectorWithoutLogSink verifies the log collector is omitted
+// when no sink consumes logs.
+func TestAgent_NoLogCollectorWithoutLogSink(t *testing.T) {
+	t.Setenv("ROUTER_PASS", "secret")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	multi := export.NewMultiSink(quietLogger(),
+		&fakeSink{name: "s", cap: export.Capabilities{Metrics: true, Logs: false}})
+	a := New(cfg, quietLogger(), multi)
+
+	if !a.wantMetrics {
+		t.Error("wantMetrics should be true")
+	}
+	if a.wantLogs {
+		t.Error("wantLogs should be false")
+	}
+	if a.logColl != nil {
+		t.Error("log collector should be nil when no sink consumes logs")
+	}
+	// With no COLLECTORS restriction, all default collectors run.
+	if len(a.collectors) == 0 {
+		t.Error("expected default collectors")
+	}
+}
+
 // TestAgent_RunContextCancelled verifies that Run returns promptly when the
 // context is already cancelled, without panicking or hanging.
 func TestAgent_RunContextCancelled(t *testing.T) {
