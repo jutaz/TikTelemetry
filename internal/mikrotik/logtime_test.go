@@ -129,6 +129,53 @@ func TestInferYear(t *testing.T) {
 	}
 }
 
+// TestInferYearFeb29 guards against the time.Date normalization bug where a
+// Feb 29 entry placed in a non-leap year silently becomes March 1.
+func TestInferYearFeb29(t *testing.T) {
+	feb29 := time.Date(0, time.February, 29, 10, 20, 30, 0, time.UTC)
+
+	// Reference in a non-leap year (2025): the entry must resolve to the nearest
+	// earlier leap year (2024), not shift to March 1.
+	ref2025 := time.Date(2025, time.March, 10, 12, 0, 0, 0, time.UTC)
+	got := inferYear(feb29, ref2025)
+	if got.Month() != time.February || got.Day() != 29 {
+		t.Errorf("Feb 29 with non-leap ref resolved to %s, want a Feb 29 date", got.Format("2006-01-02"))
+	}
+	if got.Year() != 2024 {
+		t.Errorf("Feb 29 resolved to year %d, want 2024 (nearest leap year)", got.Year())
+	}
+
+	// Reference in a leap year (2024): stays in that year.
+	ref2024 := time.Date(2024, time.March, 10, 12, 0, 0, 0, time.UTC)
+	got = inferYear(feb29, ref2024)
+	if got.Year() != 2024 || got.Month() != time.February || got.Day() != 29 {
+		t.Errorf("Feb 29 with leap ref = %s, want 2024-02-29", got.Format("2006-01-02"))
+	}
+}
+
+func TestIsLeap(t *testing.T) {
+	cases := map[int]bool{
+		2024: true, 2025: false, 2000: true, 1900: false, 2100: false, 2400: true,
+	}
+	for y, want := range cases {
+		if got := isLeap(y); got != want {
+			t.Errorf("isLeap(%d) = %v, want %v", y, got, want)
+		}
+	}
+}
+
+// TestParseLogTimeFeb29 exercises the full parse path for a Feb 29 clock entry.
+func TestParseLogTimeFeb29(t *testing.T) {
+	ref := time.Date(2025, time.March, 1, 0, 5, 0, 0, time.UTC) // non-leap year
+	got, ok := parseLogTime("feb/29 10:20:30", ref)
+	if !ok {
+		t.Fatal("expected feb/29 to parse")
+	}
+	if got.Month() != time.February || got.Day() != 29 {
+		t.Errorf("parseLogTime(feb/29) = %s, want a Feb 29 date (not normalized to Mar 1)", got.Format("2006-01-02"))
+	}
+}
+
 func TestParseRouterClock(t *testing.T) {
 	tests := []struct {
 		name   string

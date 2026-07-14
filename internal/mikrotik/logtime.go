@@ -89,14 +89,35 @@ func inferYear(t, ref time.Time) time.Time {
 	if loc == nil {
 		loc = time.Local
 	}
-	candidate := time.Date(ref.Year(), t.Month(), t.Day(),
-		t.Hour(), t.Minute(), t.Second(), 0, loc)
+	candidate := dateInYear(ref.Year(), t, loc)
 	// Allow a small skew so an entry stamped a few seconds ahead of the
 	// reference (clock jitter) is not pushed back a whole year.
 	if candidate.After(ref.Add(24 * time.Hour)) {
-		candidate = candidate.AddDate(-1, 0, 0)
+		candidate = dateInYear(ref.Year()-1, t, loc)
 	}
 	return candidate
+}
+
+// dateInYear builds a time at the given year using t's month/day/clock. It
+// guards against Go's time.Date normalization silently shifting an invalid
+// date: a Feb 29 entry placed in a non-leap year would otherwise become Mar 1.
+// In that case it walks back to the nearest earlier leap year so the day is
+// preserved rather than corrupted.
+func dateInYear(year int, t time.Time, loc *time.Location) time.Time {
+	if t.Month() == time.February && t.Day() == 29 && !isLeap(year) {
+		for y := year - 1; y >= year-4; y-- {
+			if isLeap(y) {
+				year = y
+				break
+			}
+		}
+	}
+	return time.Date(year, t.Month(), t.Day(),
+		t.Hour(), t.Minute(), t.Second(), 0, loc)
+}
+
+func isLeap(year int) bool {
+	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
 }
 
 // zoneFromGMTOffset parses a RouterOS gmt-offset string like "+00:00",
