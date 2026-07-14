@@ -7,6 +7,8 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,16 +18,42 @@ import (
 	"github.com/jutaz/tiktelemetry/internal/agent"
 	"github.com/jutaz/tiktelemetry/internal/config"
 	"github.com/jutaz/tiktelemetry/internal/export"
+	"github.com/jutaz/tiktelemetry/internal/preflight"
 
 	// Registers all built-in export adapters and aliases via their init().
 	_ "github.com/jutaz/tiktelemetry/internal/exporters"
 )
 
+// version is overridable at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
-	os.Exit(run())
+	os.Exit(run(os.Args[1:]))
 }
 
-func run() int {
+func run(args []string) int {
+	fs := flag.NewFlagSet("tiktelemetry", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	var (
+		checkMode   = fs.Bool("check", false, "run read-only preflight checks (router API + exporter endpoints) and exit")
+		showVersion = fs.Bool("version", false, "print version and exit")
+	)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "tiktelemetry — push MikroTik RouterOS metrics and logs to OTLP/Prometheus/Loki backends.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: tiktelemetry [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "All configuration is via environment variables (see the README).\n\n")
+		fmt.Fprintf(os.Stderr, "Flags:\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	if *showVersion {
+		fmt.Println("tiktelemetry", version)
+		return 0
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).
@@ -33,8 +61,13 @@ func run() int {
 		return 1
 	}
 
+	if *checkMode {
+		return runCheck(cfg)
+	}
+
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
+	logger.Info("starting tiktelemetry", "version", version)
 
 	// Root context cancelled on SIGINT/SIGTERM for graceful shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -63,8 +96,35 @@ func run() int {
 	return 0
 }
 
+// runCheck executes the preflight diagnostics and prints a human-readable
+// report to stdout. It returns 0 when every check passes, 1 otherwise.
+func runCheck(cfg config.Config) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	fmt.Printf("tiktelemetry %s — preflight check\n\n", version)
+	report := preflight.Run(ctx, cfg)
+
+	for _, res := range report.Results {
+		mark := "PASS"
+		if !res.OK {
+			mark = "FAIL"
+		}
+		fmt.Printf("[%s] %-22s %s (%s)\n", mark, res.Name, res.Detail, res.Elapsed.Round(time.Millisecond))
+	}
+
+	fmt.Println()
+	if report.OK() {
+		fmt.Println("All checks passed. The agent should run cleanly with this configuration.")
+		return 0
+	}
+	fmt.Println("One or more checks failed. Fix the items marked FAIL above, then re-run --check.")
+	return 1
+}
+
 // newLogger builds a JSON slog logger at the configured level. JSON output is
-// chosen so the host (Docker/systemd) can parse the agent's own diagnostics.
+// chosen so the host (Docker/RouterOS/systemd) can parse the agent's own
+// diagnostics.
 func newLogger(level string) *slog.Logger {
 	var lvl slog.Level
 	switch level {
