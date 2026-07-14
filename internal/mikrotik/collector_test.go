@@ -290,11 +290,12 @@ func TestInterfaceCollector_MultipleInterfaces(t *testing.T) {
 		t.Fatal("missing mikrotik.interface.up")
 	}
 	// there are two up gauges; pick the one for ether1
-	if s.Attributes["interface"] == "ether1" {
+	switch s.Attributes["interface"] {
+	case "ether1":
 		if s.Value != 1 || s.Kind != model.KindGauge {
 			t.Errorf("ether1 up: value=%d kind=%d", s.Value, s.Kind)
 		}
-	} else if s.Attributes["interface"] == "ether2" {
+	case "ether2":
 		if s.Value != 0 || s.Kind != model.KindGauge {
 			t.Errorf("ether2 up: value=%d kind=%d", s.Value, s.Kind)
 		}

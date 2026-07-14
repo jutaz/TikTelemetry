@@ -135,7 +135,7 @@ func (p *prometheusSink) ConsumeMetrics(ctx context.Context, samples []model.Sam
 	if err != nil {
 		return fmt.Errorf("prometheus: post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

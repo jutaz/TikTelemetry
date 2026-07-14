@@ -93,7 +93,7 @@ func (s *lokiSink) ConsumeLogs(ctx context.Context, entries []model.LogEntry) er
 	if err != nil {
 		return fmt.Errorf("loki: post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))

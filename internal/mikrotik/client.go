@@ -52,7 +52,7 @@ func (c *Client) Run(ctx context.Context, cmd ...string) (*routeros.Reply, error
 			"address", c.cfg.Address,
 			"error", err,
 		)
-		c.cli.Close()
+		_ = c.cli.Close()
 		c.cli = nil
 		return nil, err
 	}
