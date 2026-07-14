@@ -173,6 +173,7 @@ func TestLogCollector(t *testing.T) {
 	// Poll again; the new entry should surface. Retry a few times since log
 	// write and read are eventually consistent.
 	var found bool
+	var markerTime time.Time
 	for i := 0; i < 10 && !found; i++ {
 		entries, err := lc.Collect(ctx, client)
 		if err != nil {
@@ -181,6 +182,7 @@ func TestLogCollector(t *testing.T) {
 		for _, e := range entries {
 			if strings.Contains(e.Message, "tiktelemetry-e2e-marker") {
 				found = true
+				markerTime = e.Time
 			}
 		}
 		if !found {
@@ -188,7 +190,17 @@ func TestLogCollector(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Error("did not observe the marker log entry after generating it")
+		t.Fatal("did not observe the marker log entry after generating it")
+	}
+
+	// The timestamp must be resolved from the router clock (not epoch, not
+	// wildly off). The marker was written moments ago, so its time should be
+	// within a few minutes of the local wall clock.
+	if markerTime.IsZero() {
+		t.Error("marker entry has a zero timestamp")
+	}
+	if d := time.Since(markerTime); d < -5*time.Minute || d > 5*time.Minute {
+		t.Errorf("marker timestamp %s is %s from now; expected within a few minutes", markerTime, d)
 	}
 }
 

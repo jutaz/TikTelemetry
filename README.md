@@ -331,9 +331,9 @@ The agent tails RouterOS logs via `/log/print` on each poll cycle and pushes the
 - **OTLP exporter** — logs are sent as OTLP log records with severity and attributes.
 - **Loki exporter** — logs are pushed as JSON streams with labels `service`, `source=mikrotik`, `level`, and `instance`. RouterOS topics and the message ID are included as structured metadata.
 
-### Known limitation
+### Timestamps
 
-RouterOS `/log/print` does not provide real timestamps for historical log entries — logs arrive as they are emitted by the router. The agent assigns each log record the collection timestamp rather than the actual event timestamp.
+RouterOS `/log/print` reports each entry's time as a wall clock that usually omits the year (e.g. `15:04:05` or `jan/02 15:04:05`). The agent reads the router's own clock and timezone (`/system/clock/print`, including `gmt-offset`) once per poll and uses it to resolve each entry to an absolute, timezone-correct timestamp — so logs land at the right moment in Loki or your OTLP backend regardless of where the agent runs. Entries whose time cannot be parsed, or when the router clock is unavailable, fall back to the collection time.
 
 ---
 

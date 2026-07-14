@@ -10,17 +10,21 @@ import (
 
 // LogCollector tails the RouterOS log buffer, producing model.LogEntry values.
 //
-// RouterOS log timestamps are unreliable for absolute time because they
-// typically contain only a relative clock (e.g. "jan/02 15:04:05" or
-// "15:04:05") without a reliable year or date. The collector therefore sets
-// LogEntry.Time to time.Now() at collection time. This is a known limitation.
+// RouterOS /log/print time fields usually omit the year and are often just a
+// wall clock (e.g. "15:04:05" or "jan/02 15:04:05"). To place entries correctly
+// in the log backend, the collector reads the router's current time from
+// /system/clock/print once per poll and uses it to resolve each entry's
+// absolute timestamp (see parseLogTime). When the router clock is unavailable
+// or an entry's time cannot be parsed, it falls back to collection time.
 type LogCollector struct {
 	lastID string
+	// now is overridable in tests; defaults to time.Now.
+	now func() time.Time
 }
 
 // NewLogCollector returns a LogCollector ready for use.
 func NewLogCollector() *LogCollector {
-	return &LogCollector{}
+	return &LogCollector{now: time.Now}
 }
 
 // Collect runs /log/print and returns entries newer than the last poll.
@@ -31,17 +35,30 @@ func NewLogCollector() *LogCollector {
 // the entries after it. If the buffer has rotated (the old .id is gone) all
 // entries are returned.
 func (lc *LogCollector) Collect(ctx context.Context, r Runner) ([]model.LogEntry, error) {
+	if lc.now == nil {
+		lc.now = time.Now
+	}
+
 	reply, err := r.Run(ctx, "/log/print")
 	if err != nil {
 		return nil, err
 	}
 
+	// Reference time for resolving year-less log clocks: the router's own wall
+	// clock when available, otherwise the local collection time.
+	ref := lc.routerNow(ctx, r)
+	collected := lc.now()
+
 	// Parse all entries from the reply.
 	entries := make([]model.LogEntry, 0, len(reply.Re))
 	for _, s := range reply.Re {
 		topics := splitTopics(s.Map["topics"])
+		ts := collected
+		if parsed, ok := parseLogTime(s.Map["time"], ref); ok {
+			ts = parsed
+		}
 		entries = append(entries, model.LogEntry{
-			Time:    time.Now(), // see known-limitation doc on LogCollector
+			Time:    ts,
 			Topics:  topics,
 			Message: s.Map["message"],
 			ID:      s.Map[".id"],
@@ -81,6 +98,24 @@ func (lc *LogCollector) Collect(ctx context.Context, r Runner) ([]model.LogEntry
 	newEntries := entries[lastIdx+1:]
 	lc.lastID = newEntries[len(newEntries)-1].ID
 	return newEntries, nil
+}
+
+// routerNow reads the router's current wall-clock time from /system/clock. It
+// combines the clock's date and time fields into a reference timestamp used to
+// resolve year-less log entries. On any failure it falls back to the local
+// collection time, which keeps log tailing working even if the clock command is
+// restricted or absent.
+func (lc *LogCollector) routerNow(ctx context.Context, r Runner) time.Time {
+	fallback := lc.now()
+	reply, err := r.Run(ctx, "/system/clock/print")
+	if err != nil || len(reply.Re) == 0 {
+		return fallback
+	}
+	m := reply.Re[0].Map
+	if t, ok := parseRouterClock(m["date"], m["time"], m["gmt-offset"], fallback.Location()); ok {
+		return t
+	}
+	return fallback
 }
 
 // splitTopics parses the RouterOS "topics" field, which is a comma-separated
