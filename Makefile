@@ -12,7 +12,7 @@ PLATFORMS   ?= linux/amd64,linux/arm64,linux/arm/v7
 
 .PHONY: help
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
@@ -41,6 +41,12 @@ test-race: ## Run unit tests with the race detector
 cover: ## Run unit tests and print per-package coverage
 	go test ./... -count=1 -cover
 
+.PHONY: cover-html
+cover-html: ## Generate an HTML coverage report (coverage.html)
+	go test ./... -count=1 -covermode=atomic -coverprofile=coverage.out
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "wrote coverage.html"
+
 .PHONY: test-e2e
 test-e2e: ## Run end-to-end tests (starts RouterOS via testcontainers; needs Docker)
 	go test -tags e2e -count=1 -v ./test/e2e/...
@@ -58,12 +64,28 @@ vet: ## Run go vet across all packages (including e2e-tagged files)
 	go vet ./...
 	go vet -tags e2e ./test/e2e/...
 
+.PHONY: lint
+lint: ## Run golangci-lint (install from https://golangci-lint.run if missing)
+	golangci-lint run ./...
+	golangci-lint run --build-tags e2e ./...
+
+.PHONY: vuln
+vuln: ## Scan for known vulnerabilities with govulncheck
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
 .PHONY: fmt
 fmt: ## Format all Go sources
 	gofmt -w cmd internal test
 
+.PHONY: fmt-check
+fmt-check: ## Fail if any source is not gofmt-clean
+	@unformatted=$$(gofmt -l cmd internal test); \
+	if [ -n "$$unformatted" ]; then \
+		echo "Not gofmt-clean:"; echo "$$unformatted"; exit 1; \
+	fi
+
 .PHONY: check
-check: fmt vet test ## Format, vet, and unit-test
+check: fmt vet lint test ## Format, vet, lint, and unit-test
 
 .PHONY: image
 image: ## Build and push the multi-arch container image
@@ -73,6 +95,10 @@ image: ## Build and push the multi-arch container image
 tidy: ## Tidy go.mod / go.sum
 	go mod tidy
 
+.PHONY: run
+run: ## Build and run locally (reads .env if present via your shell)
+	go run $(PKG)
+
 .PHONY: clean
 clean: ## Remove build artifacts
-	rm -f $(BINARY) $(BINARY)-armv7 $(BINARY)-arm64
+	rm -f $(BINARY) $(BINARY)-armv7 $(BINARY)-arm64 coverage.out coverage.html
