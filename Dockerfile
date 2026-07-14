@@ -16,12 +16,14 @@ RUN go mod download
 COPY . .
 
 ARG TARGETOS TARGETARCH TARGETVARIANT
+# VERSION is stamped into the binary and reported by `tiktelemetry --version`.
+ARG VERSION=dev
 
 # TARGETVARIANT is e.g. "v7" for arm/v7; strip the leading "v" for GOARM.
 # Harmlessly empty for non-arm architectures.
 RUN VARIANT="${TARGETVARIANT#v}"; \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${VARIANT} \
-    go build -ldflags="-s -w" -o /tiktelemetry ./cmd/tiktelemetry
+    go build -ldflags="-s -w -X main.version=${VERSION}" -o /tiktelemetry ./cmd/tiktelemetry
 
 # ── Stage 2: Scratch runtime ────────────────────────────────────────────────────
 FROM scratch

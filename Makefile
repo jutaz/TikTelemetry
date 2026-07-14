@@ -4,9 +4,14 @@
 
 BINARY      := tiktelemetry
 PKG         := ./cmd/tiktelemetry
-LDFLAGS     := -s -w
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS     := -s -w -X main.version=$(VERSION)
 IMAGE       ?= ghcr.io/jutaz/tiktelemetry:latest
 PLATFORMS   ?= linux/amd64,linux/arm64,linux/arm/v7
+
+# Map a friendly arch name to Docker platform + tar suffix for `image-tar`.
+# Override ARCH to build a single-arch tar, e.g. `make image-tar ARCH=arm64`.
+ARCH        ?= arm64
 
 .DEFAULT_GOAL := help
 
@@ -89,7 +94,21 @@ check: fmt vet lint test ## Format, vet, lint, and unit-test
 
 .PHONY: image
 image: ## Build and push the multi-arch container image
-	docker buildx build --platform $(PLATFORMS) -t $(IMAGE) --push .
+	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) -t $(IMAGE) --push .
+
+.PHONY: image-tar
+image-tar: ## Build a single-arch image and save it as a .tar for offline RouterOS import (ARCH=arm|arm64|amd64)
+	@case "$(ARCH)" in \
+	  arm)   platform=linux/arm/v7 ;; \
+	  arm64) platform=linux/arm64 ;; \
+	  amd64) platform=linux/amd64 ;; \
+	  *) echo "unknown ARCH=$(ARCH) (use arm, arm64, or amd64)"; exit 1 ;; \
+	esac; \
+	echo "Building $(IMAGE) for $$platform ..."; \
+	docker buildx build --platform $$platform --build-arg VERSION=$(VERSION) \
+	  -t tiktelemetry:$(ARCH) --load . && \
+	docker save tiktelemetry:$(ARCH) -o tiktelemetry-$(ARCH).tar && \
+	echo "wrote tiktelemetry-$(ARCH).tar (upload this to the router for '/container/add file=...')"
 
 .PHONY: tidy
 tidy: ## Tidy go.mod / go.sum
@@ -101,4 +120,4 @@ run: ## Build and run locally (reads .env if present via your shell)
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	rm -f $(BINARY) $(BINARY)-armv7 $(BINARY)-arm64 coverage.out coverage.html
+	rm -f $(BINARY) $(BINARY)-armv7 $(BINARY)-arm64 coverage.out coverage.html tiktelemetry-*.tar

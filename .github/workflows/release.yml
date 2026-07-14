@@ -6,8 +6,8 @@ on:
       - "v*"
 
 permissions:
-  contents: read
-  packages: write
+  contents: write # needed to attach assets to the GitHub Release
+  packages: write # needed to push to GHCR
 
 jobs:
   image:
@@ -39,11 +39,52 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - name: Build and push
+      - name: Build and push (multi-arch)
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  tarballs:
+    name: Offline image tarballs
+    runs-on: ubuntu-latest
+    # Per-architecture `docker save` tarballs for offline RouterOS import
+    # (/container/add file=...), which avoids all registry authentication.
+    strategy:
+      matrix:
+        include:
+          - arch: arm
+            platform: linux/arm/v7
+          - arch: arm64
+            platform: linux/arm64
+          - arch: amd64
+            platform: linux/amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build single-arch image and save as tar
+        run: |
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --build-arg VERSION=${{ github.ref_name }} \
+            -t tiktelemetry:${{ matrix.arch }} --load .
+          docker save tiktelemetry:${{ matrix.arch }} \
+            -o tiktelemetry-${{ github.ref_name }}-${{ matrix.arch }}.tar
+          gzip -9 tiktelemetry-${{ github.ref_name }}-${{ matrix.arch }}.tar
+
+      - name: Attach tarball to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: tiktelemetry-${{ github.ref_name }}-${{ matrix.arch }}.tar.gz
+          fail_on_unmatched_files: true
