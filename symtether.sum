@@ -1,7 +1,7 @@
 internal/agent/agent.go#scrape  ast:sha256:c72e4c8187c3b608274e60284af0728e967f504f4f893f4f9e750c97db7c2b69  2026-07-14
 internal/config/config.go#Config  ast:sha256:53b038433388e3994c0e0078f0991e678198d335d26b0127e4f0ab0c0271958e  2026-07-14
 internal/config/config.go#Env  ast:sha256:1df81d33735f118f68ea09a1930e1c53a2e2cba9ee283ad8ada01bcea7b2ce4c  2026-07-14
-internal/config/config.go#validate  ast:sha256:848d75ed22a77c04b411f98eff0acfa8b30dbe0034fcc248b82f9062b1d5b2ec  2026-07-14
+internal/config/config.go#validate  ast:sha256:ef295e4f3930664128c08ac83b096eaaa1b23a4c36d43e7cff1c0f210f849563  2026-07-14
 internal/export/exporthelp/exporthelp.go#SanitizeLabelName  ast:sha256:9a15de49f4b74f70a056fcf39b6d7b14ddef3e6c54d28a6d7ba322b52851d344  2026-07-14
 internal/export/loki/loki.go#buildPayload  ast:sha256:c153cdb849d5b1d1dbd076d3d4fb3f89be4a2556c23074de327e14c2e5d51fc4  2026-07-14
 internal/export/multi.go#MultiSink  ast:sha256:a804ea1a9145c4621246f36bc78de2a60731a18e7cb8c56b851234c54dbbcdc4  2026-07-14

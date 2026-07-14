@@ -130,8 +130,17 @@ LOKI_PASS=glc_xxxxxx
 
 ### 3. Run with Docker Compose
 
+Use the provided template as your compose file (or copy it):
+
 ```bash
+cp docker-compose.example.yml docker-compose.yml
 docker compose up -d
+```
+
+Or point compose at the template directly without copying:
+
+```bash
+docker compose -f docker-compose.example.yml up -d
 ```
 
 ### 4. Or run directly

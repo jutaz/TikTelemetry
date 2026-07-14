@@ -155,11 +155,18 @@ change router configuration.
 
 ### F7 — Error messages echo backend response bodies (bounded) — OK
 
-**A2/A1.** On a non-2xx push, the exporter includes the response body in the
-returned error. This body is read through `io.LimitReader(resp.Body, 1024)`
+**A2/A1.** On a non-2xx push, the **Prometheus** and **Loki** exporters (which
+speak HTTP directly) include the response body in the returned error, read
+through `io.LimitReader(resp.Body, 1024)`
 ([Prometheus](../internal/export/prometheus/prometheus.go#sym:fn:ConsumeMetrics),
-Loki, OTLP), so a hostile endpoint cannot force an unbounded read into an error
-string. The body is backend-controlled, not credential-bearing.
+Loki), so a hostile endpoint cannot force an unbounded read into an error string.
+The body is backend-controlled, not credential-bearing.
+
+The **OTLP** exporter does *not* do its own HTTP handling — all transport is
+delegated to the OpenTelemetry SDK (`otlpmetrichttp` / `otlploghttp`), so the
+agent has no direct response-body read to bound here; the SDK owns that path. As
+of this audit the OTLP SDK's export errors are surfaced to the agent log via a
+registered `otel.SetErrorHandler` (see F11), rather than being silently dropped.
 
 ### F8 — Supply chain: production binary has a minimal dependency set — OK
 
@@ -191,6 +198,17 @@ policy that can alter the router. Even a fully compromised agent (or leaked
 router credential) is confined to reading state. This is the correct blast-radius
 control for a monitoring agent and is the documented path.
 
+### F11 — OTLP export failures are surfaced, not silently dropped — OK
+
+**Operational integrity.** The OTLP SDK exports asynchronously, so a backend
+outage never reaches `ConsumeMetrics`/`ConsumeLogs` and could otherwise drop
+telemetry with no signal. A global `otel.SetErrorHandler` is registered in the
+OTLP sink's `New` to forward SDK export errors to the agent log at warn level.
+The synchronous Prometheus/Loki exporters already return push errors, which the
+agent now logs (previously the joined error from `MultiSink` was discarded). This
+is an availability/observability control, not a confidentiality one, but a
+silently-failing monitor is itself a security-relevant blind spot.
+
 ---
 
 ## Summary
@@ -200,6 +218,7 @@ control for a monitoring agent and is the documented path.
 | F1 | Credential logging | High | OK |
 | F2 | Query injection via router data | High | OK |
 | F3 | Router-driven memory exhaustion | Medium | Fix (defended) |
+| F11 | OTLP export-failure visibility | Medium | Fix (surfaced) |
 | F4 | Backend/router TLS verification | High | OK |
 | F5 | Preflight SSRF | Medium | OK |
 | F6 | Plaintext secrets on RouterOS | Medium | Accepted (documented) |
