@@ -91,13 +91,13 @@ You can combine exporters freely, e.g. `EXPORTERS=otlp,loki` pushes to an OTLP b
 
 ### 1. Create a RouterOS API user
 
-Run the setup script on your MikroTik router:
+Upload and run [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) on your MikroTik router:
 
 ```
-/import tiktelemetry-setup.rsc
+/import routeros-setup.rsc
 ```
 
-Or manually (after reviewing `scripts/routeros-setup.rsc`):
+Or manually (after reviewing the script):
 
 ```
 /user group add name=telemetry policy=api,read,test
@@ -153,6 +153,28 @@ docker run -d --restart unless-stopped --name tiktelemetry \
 ```
 
 To point at a local OpenTelemetry Collector instead, set `EXPORTERS=otlp` with `OTLP_ENDPOINT=http://collector:4318` and `OTLP_INSECURE=true`.
+
+### 5. Verify the configuration
+
+Before (or after) starting, run the built-in preflight check. It connects to the router API and every exporter endpoint read-only, then prints a clear pass/fail report:
+
+```bash
+docker run --rm --env-file .env ghcr.io/jutaz/tiktelemetry:latest --check
+```
+
+```
+tiktelemetry v1.0.0 — preflight check
+
+[PASS] router-api             connected to 192.168.88.1:8728 — board "RB4011iGS+", RouterOS "7.21.5 (stable)", arch "arm64"
+[PASS] exporter:prometheus    reachable — TLS handshake OK to prometheus-prod-42-prod-us-east-0.grafana.net:443
+[PASS] exporter:loki          reachable — TLS handshake OK to logs-prod-012.grafana.net:443
+
+All checks passed. The agent should run cleanly with this configuration.
+```
+
+It reports the router's architecture, so you can confirm you built the right image for on-router deployment, and it surfaces the usual failures (API allow-list, missing DNS, an untrusted CA or wrong clock) with a specific hint.
+
+> **Running on the router itself?** See [Running on RouterOS](#running-on-routeros) for the on-device container deployment (no separate server needed).
 
 ---
 
@@ -419,22 +441,79 @@ The harness waits for the RouterOS API to accept a login (not just for the TCP p
 
 ---
 
-## Running inside RouterOS v7
+## Running on RouterOS
 
-**Advanced / experimental.** If your MikroTik board has an ARM or ARM64 CPU, enough free storage, and the `container` package installed, you can run TikTelemetry directly on the router itself.
+Because the image is a ~14 MB static binary, it runs comfortably in RouterOS v7's built-in `container` feature — no separate server needed. This is the recommended deployment for a single router.
 
-1.  Add the container package and reboot:
-    ```
-    /system package add container
-    /system reboot
-    ```
+RouterOS containers are minimal (no compose, no healthchecks, spartan networking), so the steps below are explicit. Two helper scripts and a built-in preflight check do the heavy lifting:
 
-2.  Pull and run the image (via `container/config` or the `/container` add command). Point `ROUTER_ADDRESS` at the container's gateway IP (usually `172.17.0.1`) or use a macvlan/veth bridge to reach `127.0.0.1:8728`.
+- [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) — creates a least-privilege API user.
+- [`scripts/container-setup.rsc`](scripts/container-setup.rsc) — sets up the bridge/veth networking, environment, and container. Fully commented; read and edit it before running.
+- `tiktelemetry --check` — a read-only preflight that verifies the router API and every exporter endpoint are reachable, and prints exactly what is wrong if not.
 
-3.  Restrict API access to the container host:
-    ```
-    /ip service set api address=172.17.0.2/32
-    ```
+### Prerequisites
+
+1. **A supported architecture.** Containers run on `arm`, `arm64`, and `x86` boards only (not `mipsbe`/`smips`). Check with `/system/resource/print` and match the image:
+
+   | RouterOS `architecture-name` | Image / tarball arch |
+   |------------------------------|----------------------|
+   | `arm`                        | `arm` (linux/arm/v7) |
+   | `arm64`                      | `arm64`              |
+   | `x86_64`                     | `amd64`              |
+
+   A wrong-architecture image will fail to start, often without a clear error — this is the #1 gotcha.
+
+2. **The `container` package**, installed for your architecture and the router rebooted. It ships in the "extra packages" archive on the MikroTik download page (it is *not* in the main package). On RouterOS 7.18+ apply it with `/system/package/apply-changes`; on older versions a normal reboot is correct. Verify with `/container/config/print`.
+
+3. **Containers enabled in device-mode.** They are off by default and enabling them is gated by a **physical** confirmation for security:
+   ```
+   /system/device-mode/update container=yes
+   ```
+   Within ~5 minutes you must confirm physically: press the **reset button** on a RouterBOARD, or **cold power-cycle** an x86/CHR host (a soft `/system/reboot` does *not* count). Verify afterwards with `/system/device-mode/print` showing `container: yes`.
+
+4. **External storage** (USB / SATA / NVMe, formatted ext4). Container layers should not live on the tiny internal flash. Budget ~500 MB. Find your device name with `/disk/print` and adjust the `disk1` paths in the setup script.
+
+### Deploy
+
+1. **Create the API user** — run [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) (set a real password).
+
+2. **Get the image onto the router.** Offline import is the most reliable path (it needs no registry login, which is the usual failure point):
+   ```sh
+   make image-tar ARCH=arm64      # or arm / amd64 to match the board
+   ```
+   or download the matching `tiktelemetry-<version>-<arch>.tar.gz` from the [Releases](https://github.com/jutaz/tiktelemetry/releases) page and `gunzip` it. Upload the `.tar` to the router's external storage (WinBox Files drag-and-drop, or `scp`).
+
+   Alternatively, pull from GHCR by setting `/container/config` credentials (a GitHub token with `read:packages`) — see the script.
+
+3. **Configure and create the container** — review and edit [`scripts/container-setup.rsc`](scripts/container-setup.rsc) (subnet, storage device, exporter settings, secrets), then apply it section by section. It:
+   - creates a `containers` bridge and a `veth-tik` interface (gateway `172.17.0.1`, container `172.17.0.2`);
+   - adds a masquerade rule and sets `/ip/dns` so the outbound HTTPS push works (**DNS is required — the container will not start without it**);
+   - restricts the API service to the container subnet;
+   - sets the environment (pointing `ROUTER_ADDRESS` at `172.17.0.1:8728` — the veth gateway, **not** `127.0.0.1`, which is the container's own loopback);
+   - creates the container with `logging=yes` and `start-on-boot=yes`.
+
+4. **Start it and watch the log:**
+   ```
+   /container/print
+   /container/start 0
+   /log/print where topics~"container"
+   ```
+   The image is `scratch` (no shell), so `/container/shell` will not work — the RouterOS log is where the agent's JSON output appears.
+
+### Verifying and troubleshooting
+
+Run the preflight as a one-shot container to see exactly what works:
+
+```
+/container/add file=disk1/tiktelemetry.tar interface=veth-tik \
+    root-dir=disk1/tik-check envlist=tik cmd="/tiktelemetry --check" logging=yes
+/container/start <number>
+/log/print where topics~"container"
+```
+
+It reports the router board/version/architecture it reached and whether each exporter endpoint passes DNS + TCP + TLS, with a specific hint for each failure. Common issues: architecture mismatch, device-mode not enabled, DNS not configured, a wrong Grafana Cloud token, or the API allow-list excluding the container subnet.
+
+> **Security note:** RouterOS stores container environment variables — including `ROUTER_PASS` and your Grafana tokens — in **plaintext** in the config export. Treat the router configuration as sensitive, and use a least-privilege API user (the setup script creates a read-only one).
 
 ---
 

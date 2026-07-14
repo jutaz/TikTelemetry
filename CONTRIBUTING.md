@@ -42,7 +42,9 @@ internal/export/prometheus/  Prometheus remote_write adapter.
 internal/export/loki/     Loki push adapter.
 internal/exporters/       Composition root: registers adapters + aliases.
 internal/agent/           Scrape loop tying collectors to sinks.
+internal/preflight/       Read-only diagnostics for the `--check` mode.
 test/e2e/                 End-to-end tests (build tag `e2e`).
+scripts/                  RouterOS setup and container deployment scripts.
 ```
 
 ## Adding a metric collector

@@ -4,9 +4,13 @@
 # Creates a least-privilege API user for the telemetry agent.
 #
 # Run on your MikroTik router via:
-#   /import tiktelemetry-setup.rsc
+#   /import routeros-setup.rsc
 #
 # Or paste line-by-line in the terminal / WinBox.
+#
+# To run TikTelemetry directly ON the router (RouterOS container feature),
+# run scripts/container-setup.rsc afterwards — see the README
+# "Running on RouterOS" section.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Create a read-only user group for API access
