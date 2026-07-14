@@ -10,6 +10,10 @@
 #
 # Default credentials are admin with a blank password. The binary API is
 # enabled by default on CHR and forwarded on 8728.
+#
+# Two networks are required: with a second interface (eth1) present, the image's
+# entrypoint enables QEMU host port forwarding on eth0 so the API is reachable
+# from the host. With a single network the API port is not forwarded.
 services:
   routeros:
     image: evilfreelancer/docker-routeros:7
@@ -23,3 +27,10 @@ services:
     ports:
       - "8728:8728" # RouterOS binary API
       - "8729:8729" # RouterOS API-SSL
+    networks:
+      - default
+      - routeros_net
+
+networks:
+  routeros_net:
+    driver: bridge

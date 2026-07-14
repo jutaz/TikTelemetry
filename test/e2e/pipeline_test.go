@@ -66,10 +66,10 @@ func (cs *captureServer) bodies() [][]byte {
 // to a local capture server, asserting a valid snappy+protobuf payload arrives
 // carrying a known metric name.
 func TestPipelinePrometheus(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadyTimeout+2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	r := startRouter(ctx, t)
+	r := sharedRouter
 	client := newClient(t, r)
 	defer client.Close()
 
@@ -116,10 +116,10 @@ func TestPipelinePrometheus(t *testing.T) {
 // collector, and pushes through the real Loki sink to a capture server,
 // asserting a JSON stream carrying the marker arrives.
 func TestPipelineLoki(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadyTimeout+2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	r := startRouter(ctx, t)
+	r := sharedRouter
 	client := newClient(t, r)
 	defer client.Close()
 

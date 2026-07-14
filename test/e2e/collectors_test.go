@@ -30,10 +30,10 @@ func newClient(t *testing.T, r router) *mikrotik.Client {
 // TestSystemResourceCollector verifies the system collector returns real
 // gauges/counters from a live RouterOS instance.
 func TestSystemResourceCollector(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadyTimeout+time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	r := startRouter(ctx, t)
+	r := sharedRouter
 	client := newClient(t, r)
 	defer client.Close()
 
@@ -94,10 +94,10 @@ func TestSystemResourceCollector(t *testing.T) {
 // TestInterfaceCollector verifies the interface collector returns per-interface
 // series from a live RouterOS instance. CHR always has at least one interface.
 func TestInterfaceCollector(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadyTimeout+time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	r := startRouter(ctx, t)
+	r := sharedRouter
 	client := newClient(t, r)
 	defer client.Close()
 
@@ -148,10 +148,10 @@ func TestInterfaceCollector(t *testing.T) {
 // instance: the first poll primes the cursor and returns nothing, and after
 // generating a log entry a subsequent poll returns it.
 func TestLogCollector(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadyTimeout+2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	r := startRouter(ctx, t)
+	r := sharedRouter
 	client := newClient(t, r)
 	defer client.Close()
 
