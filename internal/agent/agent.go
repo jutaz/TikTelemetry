@@ -118,9 +118,12 @@ func (a *Agent) scrapeMetrics(ctx context.Context) {
 		return
 	}
 
-	// MultiSink logs per-sink failures itself; a joined error here just means at
-	// least one sink failed, which we've already surfaced.
-	_ = a.sinks.ConsumeMetrics(ctx, all)
+	// MultiSink logs per-sink failures itself; surface a joined error here at
+	// warn level so a persistently failing synchronous exporter (Prometheus /
+	// Loki) is visible in the agent's own log, not just the sink's.
+	if err := a.sinks.ConsumeMetrics(ctx, all); err != nil {
+		a.logger.Warn("one or more exporters rejected metrics", "error", err)
+	}
 	a.logger.Debug("metrics collected", "samples", len(all))
 }
 
@@ -133,6 +136,8 @@ func (a *Agent) scrapeLogs(ctx context.Context) {
 	if len(entries) == 0 {
 		return
 	}
-	_ = a.sinks.ConsumeLogs(ctx, entries)
+	if err := a.sinks.ConsumeLogs(ctx, entries); err != nil {
+		a.logger.Warn("one or more exporters rejected logs", "error", err)
+	}
 	a.logger.Debug("logs collected", "entries", len(entries))
 }

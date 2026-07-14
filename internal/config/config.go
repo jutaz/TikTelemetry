@@ -126,8 +126,10 @@ func (c Config) validate() error {
 	if c.Router.Password == "" {
 		return fmt.Errorf("ROUTER_PASS is required")
 	}
-	if c.PollInterval <= 0 {
-		return fmt.Errorf("POLL_INTERVAL must be positive, got %s", c.PollInterval)
+	// Enforce a floor so a tiny interval cannot hammer the router (each scrape
+	// issues a dozen API commands) or spin the export pipeline.
+	if c.PollInterval < time.Second {
+		return fmt.Errorf("POLL_INTERVAL must be at least 1s, got %s", c.PollInterval)
 	}
 	return nil
 }

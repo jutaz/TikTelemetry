@@ -92,6 +92,22 @@ func TestPollInterval_Negative(t *testing.T) {
 	}
 }
 
+func TestPollInterval_BelowMinimum(t *testing.T) {
+	t.Setenv("ROUTER_PASS", "secret")
+	for _, v := range []string{"1ns", "100ms", "999ms"} {
+		t.Setenv("POLL_INTERVAL", v)
+		if _, err := Load(); err == nil {
+			t.Errorf("expected error for sub-1s POLL_INTERVAL %q", v)
+		}
+	}
+
+	// Exactly 1s is allowed.
+	t.Setenv("POLL_INTERVAL", "1s")
+	if _, err := Load(); err != nil {
+		t.Errorf("1s POLL_INTERVAL should be valid, got %v", err)
+	}
+}
+
 func TestRouterTLS_BoolParsing(t *testing.T) {
 	t.Setenv("ROUTER_PASS", "secret")
 

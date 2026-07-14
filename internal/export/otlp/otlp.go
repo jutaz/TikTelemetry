@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/jutaz/tiktelemetry/internal/config"
 	"github.com/jutaz/tiktelemetry/internal/export"
 	"github.com/jutaz/tiktelemetry/internal/export/exporthelp"
@@ -85,6 +87,14 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (export.Si
 		return nil, errors.New("OTLP_ENDPOINT is required")
 	}
 	endpoint = strings.TrimRight(endpoint, "/")
+
+	// The OTLP SDK exports asynchronously (PeriodicReader / BatchProcessor), so
+	// push failures never reach ConsumeMetrics/ConsumeLogs. Route the SDK's
+	// error channel to the agent log so a backend outage is visible instead of
+	// silently dropping telemetry.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		logger.Warn("OTLP export error", "error", err)
+	}))
 
 	headers, err := buildHeaders(cfg)
 	if err != nil {

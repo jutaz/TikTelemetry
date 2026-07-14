@@ -116,7 +116,9 @@ func TestEndToEndPush(t *testing.T) {
 		t.Setenv("OTLP_ENDPOINT", srv.URL)
 		t.Setenv("OTLP_USER", "testuser")
 		t.Setenv("OTLP_PASS", "testpass")
-		t.Setenv("POLL_INTERVAL", "100ms")
+		// Flush is forced via Shutdown below, so the interval only needs to be a
+		// valid (>= 1s) value.
+		t.Setenv("POLL_INTERVAL", "1s")
 	})
 
 	sink, err := New(context.Background(), cfg, quietLogger())
