@@ -187,7 +187,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | Variable          | Required | Default               | Description                                  |
 |-------------------|----------|-----------------------|----------------------------------------------|
 | `EXPORTERS`       | no       | `otlp`                | Comma-separated list: `otlp`, `prometheus`, `loki`, or alias `grafanacloud` |
-| `COLLECTORS`      | no       | *(all)*               | Comma-separated subset of collectors to run: `system`, `interface`, `health`, `dhcp`, `connections`, `counts`, `firewall`, `wireless`. Empty = all. |
+| `COLLECTORS`      | no       | *(all)*               | Comma-separated subset of collectors to run: `system`, `interface`, `health`, `dhcp`, `connections`, `counts`, `firewall`, `wireless`, `wireguard`, `ipsec`, `ppp`, `queue`. Empty = all. |
 | `POLL_INTERVAL`   | no       | `15s`                 | Scrape interval (Go duration format)         |
 | `SERVICE_NAME`    | no       | `tiktelemetry`        | Resource attribute / label                   |
 | `SERVICE_VERSION` | no       | `dev`                 | Resource attribute / label                   |
@@ -263,8 +263,12 @@ TikTelemetry groups metric collection into individual collectors controlled by t
 | `counts`       | IP address and route counts                                | `/ip/address/print`, `/ip/route/print`                       | Available on CHR |
 | `firewall`     | Filter rule cumulative bytes and packets                   | `/ip/firewall/filter/print`                                  | Empty on default CHR with no rules |
 | `wireless`     | Connected wireless clients per radio                       | `/interface/wireless/registration-table/print` or `/interface/wifi/registration-table/print` | Hardware radios only; returns nothing on CHR |
+| `wireguard`    | Per-peer rx/tx bytes and last-handshake age                | `/interface/wireguard/peers/print`                           | Empty when no peers configured |
+| `ipsec`        | Per-peer rx/tx bytes and packets, active-peer count        | `/ip/ipsec/active-peers/print`                               | Empty aggregate when no tunnels |
+| `ppp`          | Active PPP/PPPoE/L2TP session counts by service            | `/ppp/active/print`                                          | Empty aggregate when no sessions |
+| `queue`        | Per-queue tx/rx bytes, packets, and drops                  | `/queue/simple/print` (`=stats=`)                            | Empty when no simple queues |
 
-Collectors targeting hardware or features not present on the device (health sensors on CHR, wireless without a radio, firewall rules or DHCP leases when unconfigured) simply emit zero series and never fail the scrape — this resilience is by design.
+Collectors targeting hardware or features not present on the device (health sensors on CHR, wireless without a radio, firewall rules / DHCP leases / VPN peers / queues when unconfigured) simply emit zero series and never fail the scrape — this resilience is by design.
 
 ### Gauges
 
@@ -283,6 +287,10 @@ Collectors targeting hardware or features not present on the device (health sens
 | `mikrotik.ip.addresses`            | 1      | —                   | Number of configured IP addresses          |
 | `mikrotik.ip.routes`               | 1      | —                   | Number of routes in the routing table      |
 | `mikrotik.wireless.clients`        | 1      | `interface`         | Connected wireless clients per radio       |
+| `mikrotik.wireguard.last_handshake`| s      | `interface`, `comment` (*) | Seconds since the last WireGuard handshake |
+| `mikrotik.ipsec.active_peers`      | 1      | —                   | Number of established IPsec peers (always emitted) |
+| `mikrotik.ppp.sessions`            | 1      | `service`           | Active PPP sessions per service type       |
+| `mikrotik.ppp.sessions.total`      | 1      | —                   | Total active PPP sessions (always emitted) |
 
 ### Counters (cumulative)
 
@@ -295,6 +303,15 @@ Collectors targeting hardware or features not present on the device (health sens
 | `mikrotik.interface.tx.packets`       | 1    | `interface`, `type`                 | Packets transmitted on interface         |
 | `mikrotik.firewall.filter.bytes`      | By   | `chain`, `action`, `comment` (*)    | Cumulative bytes per firewall rule       |
 | `mikrotik.firewall.filter.packets`    | 1    | `chain`, `action`, `comment` (*)    | Cumulative packets per firewall rule     |
+| `mikrotik.wireguard.rx.bytes`         | By   | `interface`, `comment` (*)          | Bytes received from a WireGuard peer     |
+| `mikrotik.wireguard.tx.bytes`         | By   | `interface`, `comment` (*)          | Bytes sent to a WireGuard peer           |
+| `mikrotik.ipsec.rx.bytes`             | By   | `remote`                            | Bytes received over an IPsec peer        |
+| `mikrotik.ipsec.tx.bytes`             | By   | `remote`                            | Bytes sent over an IPsec peer            |
+| `mikrotik.ipsec.rx.packets`           | 1    | `remote`                            | Packets received over an IPsec peer      |
+| `mikrotik.ipsec.tx.packets`           | 1    | `remote`                            | Packets sent over an IPsec peer          |
+| `mikrotik.queue.tx.bytes` / `.rx.bytes`     | By | `queue`                       | Bytes sent/received through a simple queue |
+| `mikrotik.queue.tx.packets` / `.rx.packets` | 1  | `queue`                       | Packets sent/received through a simple queue |
+| `mikrotik.queue.tx.dropped` / `.rx.dropped` | 1  | `queue`                       | Packets dropped by a simple queue        |
 
 Interface metrics carry two resource attributes:
 - `interface` — the interface name (e.g. `ether1`, `wlan1`)

@@ -404,6 +404,7 @@ func TestDefaultCollectors(t *testing.T) {
 	want := []string{
 		"system", "interface", "health", "dhcp",
 		"connections", "counts", "firewall", "wireless",
+		"wireguard", "ipsec", "ppp", "queue",
 	}
 	if len(cs) != len(want) {
 		t.Fatalf("DefaultCollectors() returned %d collectors, want %d", len(cs), len(want))

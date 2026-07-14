@@ -252,6 +252,10 @@ func DefaultCollectors() []Collector {
 		&countsCollector{},
 		&firewallCollector{},
 		&wirelessCollector{},
+		&wireguardCollector{},
+		&ipsecCollector{},
+		&pppCollector{},
+		&queueCollector{},
 	}
 }
 
@@ -297,4 +301,8 @@ var (
 	_ Collector = (*countsCollector)(nil)
 	_ Collector = (*firewallCollector)(nil)
 	_ Collector = (*wirelessCollector)(nil)
+	_ Collector = (*wireguardCollector)(nil)
+	_ Collector = (*ipsecCollector)(nil)
+	_ Collector = (*pppCollector)(nil)
+	_ Collector = (*queueCollector)(nil)
 )
