@@ -78,6 +78,15 @@ lint: ## Run golangci-lint (install from https://golangci-lint.run if missing)
 vuln: ## Scan for known vulnerabilities with govulncheck
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+.PHONY: docs
+docs: ## Verify #sym: doc references against the code (needs Node/npx)
+	npx --yes symtether@latest check --strict
+	npx --yes symtether@latest update --check
+
+.PHONY: docs-update
+docs-update: ## Re-stamp symtether.sum after intentionally changing referenced code
+	npx --yes symtether@latest update
+
 .PHONY: fmt
 fmt: ## Format all Go sources
 	gofmt -w cmd internal test
@@ -90,7 +99,7 @@ fmt-check: ## Fail if any source is not gofmt-clean
 	fi
 
 .PHONY: check
-check: fmt vet lint test ## Format, vet, lint, and unit-test
+check: fmt vet lint docs test ## Format, vet, lint, verify docs, and unit-test
 
 .PHONY: image
 image: ## Build and push the multi-arch container image

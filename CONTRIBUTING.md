@@ -123,6 +123,23 @@ npx symtether check   # list broken references
 npx symtether fix     # propose repairs (add --write to apply)
 ```
 
+### Staleness (`symtether.sum`)
+
+A committed `symtether.sum` holds a content hash for each referenced symbol
+(like `go.sum`, it stores derived checksums, not decisions). CI runs
+`check --strict`, which flags a reference as **stale** when its target's
+implementation changed — a prompt to re-read the surrounding prose and confirm
+it is still accurate. Formatting and renames do not trigger this; only a change
+to the symbol's actual content does.
+
+When you intentionally change a referenced symbol, review the docs that point at
+it, then re-stamp:
+
+```sh
+make docs          # check --strict + verify the sum is current
+make docs-update   # re-generate symtether.sum, then commit it
+```
+
 When documenting code, prefer a `#sym:` link over pasting a snippet or citing a
 line number.
 

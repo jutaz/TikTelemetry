@@ -61,8 +61,16 @@ jobs:
       # Validate every #sym: reference in the Markdown docs against the actual
       # code, so a renamed or removed Go symbol fails CI instead of silently
       # rotting the documentation. See https://symtether.dev.
-      - name: Verify doc symbol references
-        run: npx --yes symtether@latest check
+      - name: Verify doc symbol references (--strict)
+        # --strict also flags refs whose target's implementation changed
+        # (tracked in symtether.sum), so prose can be reviewed before it drifts.
+        run: npx --yes symtether@latest check --strict
+
+      # Fail if symtether.sum is out of date: a stamped symbol's content changed
+      # but the sum was not re-generated (run `npx symtether update` locally,
+      # review the affected docs, and commit the updated symtether.sum).
+      - name: Verify symtether.sum is current
+        run: npx --yes symtether@latest update --check
 
   test:
     name: Unit tests
