@@ -32,11 +32,11 @@ func New(cfg config.RouterConfig, logger *slog.Logger) *Client {
 	}
 }
 
-// run ensures a live connection, executes the given command, and returns the
+// Run ensures a live connection, executes the given command, and returns the
 // reply. On any run error the underlying connection is closed and nil'd so the
 // next call initiates a fresh dial. Errors are returned to the caller — no
 // infinite retry is attempted inside a single call.
-func (c *Client) run(ctx context.Context, cmd ...string) (*routeros.Reply, error) {
+func (c *Client) Run(ctx context.Context, cmd ...string) (*routeros.Reply, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

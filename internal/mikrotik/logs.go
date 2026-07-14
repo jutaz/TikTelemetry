@@ -30,8 +30,8 @@ func NewLogCollector() *LogCollector {
 // subsequent calls it scans for the previously returned .id and yields only
 // the entries after it. If the buffer has rotated (the old .id is gone) all
 // entries are returned.
-func (lc *LogCollector) Collect(ctx context.Context, c *Client) ([]model.LogEntry, error) {
-	reply, err := c.run(ctx, "/log/print")
+func (lc *LogCollector) Collect(ctx context.Context, r Runner) ([]model.LogEntry, error) {
+	reply, err := r.Run(ctx, "/log/print")
 	if err != nil {
 		return nil, err
 	}

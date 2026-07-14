@@ -4,17 +4,25 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/go-routeros/routeros/v3"
 	"github.com/jutaz/tiktelemetry/internal/model"
 )
+
+// Runner executes a RouterOS command and returns its reply. *Client satisfies
+// it; tests use an in-memory fake. This seam lets collectors be exercised
+// without a live router.
+type Runner interface {
+	Run(ctx context.Context, cmd ...string) (*routeros.Reply, error)
+}
 
 // Collector produces a slice of model.Sample from the RouterOS device.
 type Collector interface {
 	// Name returns a human-readable label for the collector (used in logging).
 	Name() string
 
-	// Collect executes one or more RouterOS commands via the Client and
+	// Collect executes one or more RouterOS commands via the Runner and
 	// returns the resulting samples.
-	Collect(ctx context.Context, c *Client) ([]model.Sample, error)
+	Collect(ctx context.Context, r Runner) ([]model.Sample, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -25,8 +33,8 @@ type systemResourceCollector struct{}
 
 func (c *systemResourceCollector) Name() string { return "system" }
 
-func (c *systemResourceCollector) Collect(ctx context.Context, cli *Client) ([]model.Sample, error) {
-	reply, err := cli.run(ctx, "/system/resource/print")
+func (c *systemResourceCollector) Collect(ctx context.Context, r Runner) ([]model.Sample, error) {
+	reply, err := r.Run(ctx, "/system/resource/print")
 	if err != nil {
 		return nil, err
 	}
@@ -123,8 +131,8 @@ type interfaceCollector struct{}
 
 func (c *interfaceCollector) Name() string { return "interface" }
 
-func (c *interfaceCollector) Collect(ctx context.Context, cli *Client) ([]model.Sample, error) {
-	reply, err := cli.run(ctx, "/interface/print")
+func (c *interfaceCollector) Collect(ctx context.Context, r Runner) ([]model.Sample, error) {
+	reply, err := r.Run(ctx, "/interface/print")
 	if err != nil {
 		return nil, err
 	}
