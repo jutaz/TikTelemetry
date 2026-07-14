@@ -358,6 +358,32 @@ The Dockerfile uses a two-stage scratch build with automatic `GOARM` derivation 
 
 ---
 
+## Testing
+
+Unit tests cover configuration, the collectors, the export adapters (with in-test protobuf/JSON decoding), and the fan-out logic. They need no network or Docker:
+
+```sh
+make test        # go test ./... -count=1
+make test-race   # with the race detector
+make cover       # per-package coverage
+```
+
+End-to-end tests exercise the real collectors and the full collect-and-push pipeline against an actual MikroTik RouterOS (Cloud Hosted Router) instance. They are gated behind the `e2e` build tag, so `go test ./...` never touches Docker, and the `testcontainers-go` dependency never links into the production binary.
+
+```sh
+# Lets testcontainers start and tear down the RouterOS container (needs Docker):
+make test-e2e
+
+# Or run against a long-lived instance:
+make e2e-up
+ROUTEROS_ADDR=127.0.0.1:8728 go test -tags e2e -count=1 -v ./test/e2e/...
+make e2e-down
+```
+
+The harness waits for the RouterOS API to accept a login (not just for the TCP port to open) before running. CHR boots in roughly 30-60s under software emulation, faster with KVM. In CI, the e2e job enables `/dev/kvm` for acceleration.
+
+---
+
 ## Running inside RouterOS v7
 
 **Advanced / experimental.** If your MikroTik board has an ARM or ARM64 CPU, enough free storage, and the `container` package installed, you can run TikTelemetry directly on the router itself.
