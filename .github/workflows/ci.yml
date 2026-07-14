@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  build-test:
-    name: Build & unit test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,19 +29,87 @@ jobs:
             exit 1
           fi
 
-      - name: Vet
+      - name: Verify modules are tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod / go.sum are not tidy; run 'go mod tidy'"
+            git --no-pager diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: go vet
         run: |
           go vet ./...
           go vet -tags e2e ./test/e2e/...
 
-      - name: Unit tests (race)
-        run: go test ./... -count=1 -race
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
 
-      - name: Cross-compile static binaries
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Test with race detector and coverage
+        run: go test ./... -count=1 -race -covermode=atomic -coverprofile=coverage.out
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: warn
+
+  build:
+    name: Cross-compile
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: arm
+            goarm: "7"
+          - goarch: arm64
+          - goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Build static binary (${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }})
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: go build -ldflags="-s -w" -o /dev/null ./cmd/tiktelemetry
+
+  vuln:
+    name: Vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: govulncheck
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o /dev/null ./cmd/tiktelemetry
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o /dev/null ./cmd/tiktelemetry
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /dev/null ./cmd/tiktelemetry
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   e2e:
     name: End-to-end (RouterOS CHR)
@@ -67,4 +135,4 @@ jobs:
       - name: Run end-to-end tests
         # testcontainers-go manages the RouterOS container lifecycle. The suite
         # waits for the API login to succeed before asserting.
-        run: go test -tags e2e -count=1 -timeout 15m -v ./test/e2e/...
+        run: go test -tags e2e -count=1 -timeout 20m -v ./test/e2e/...

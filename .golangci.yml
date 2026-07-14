@@ -1,0 +1,45 @@
+# golangci-lint configuration for TikTelemetry.
+# See https://golangci-lint.run/usage/configuration/
+version: "2"
+
+run:
+  timeout: 5m
+  build-tags:
+    - e2e
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - bodyclose
+    - revive
+
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    misspell:
+      # "routeros" is the RouterOS API library/package name, not a typo.
+      ignore-rules:
+        - routeros
+        - Routeros
+        - ROUTEROS
+
+  exclusions:
+    generated: lax
+    rules:
+      # Test helpers frequently ignore errors deliberately.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - bodyclose
+
+formatters:
+  enable:
+    - gofmt
