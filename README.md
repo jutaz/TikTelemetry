@@ -1,5 +1,7 @@
 # TikTelemetry
 
+[![CI](https://github.com/jutaz/tiktelemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/jutaz/tiktelemetry/actions/workflows/ci.yml)
+
 A lightweight Go agent that pulls metrics and logs from MikroTik RouterOS via its binary API and pushes them directly to one or more telemetry backends — OTLP/HTTP, Prometheus remote_write, Loki, or any combination. Runs on ARM32/ARM64/AMD64 in a ~14 MB static scratch container with <30 MB RSS. No Prometheus, no Alloy, no Promtail middleman.
 
 ---
@@ -163,6 +165,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | Variable          | Required | Default               | Description                                  |
 |-------------------|----------|-----------------------|----------------------------------------------|
 | `EXPORTERS`       | no       | `otlp`                | Comma-separated list: `otlp`, `prometheus`, `loki`, or alias `grafanacloud` |
+| `COLLECTORS`      | no       | *(all)*               | Comma-separated subset of collectors to run: `system`, `interface`, `health`, `dhcp`, `connections`, `counts`, `firewall`, `wireless`. Empty = all. |
 | `POLL_INTERVAL`   | no       | `15s`                 | Scrape interval (Go duration format)         |
 | `SERVICE_NAME`    | no       | `tiktelemetry`        | Resource attribute / label                   |
 | `SERVICE_VERSION` | no       | `dev`                 | Resource attribute / label                   |
@@ -224,29 +227,61 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 
 All metrics are collected from the RouterOS API and pushed to every enabled exporter that handles metrics.
 
+### Collectors
+
+TikTelemetry groups metric collection into individual collectors controlled by the `COLLECTORS` env var. When unset, all collectors run.
+
+| Collector      | What it collects                                           | RouterOS source(s)                                           | Notes |
+|----------------|------------------------------------------------------------|--------------------------------------------------------------|-------|
+| `system`       | CPU load, memory, disk, uptime                             | `/system/resource/print`                                     | Always available |
+| `interface`    | Interface bytes, packets, up status                        | `/interface/print`                                            | Always available |
+| `health`       | Temperature, voltage, fan speed, power                     | `/system/health/print`                                       | Hardware sensors; empty on CHR |
+| `dhcp`         | DHCP lease counts                                          | `/ip/dhcp-server/lease/print`                                | Empty aggregate when no DHCP server |
+| `connections`  | Firewall connection tracking counts                        | `/ip/firewall/connection/tracking/print`                     | Available on CHR |
+| `counts`       | IP address and route counts                                | `/ip/address/print`, `/ip/route/print`                       | Available on CHR |
+| `firewall`     | Filter rule cumulative bytes and packets                   | `/ip/firewall/filter/print`                                  | Empty on default CHR with no rules |
+| `wireless`     | Connected wireless clients per radio                       | `/interface/wireless/registration-table/print` or `/interface/wifi/registration-table/print` | Hardware radios only; returns nothing on CHR |
+
+Collectors targeting hardware or features not present on the device (health sensors on CHR, wireless without a radio, firewall rules or DHCP leases when unconfigured) simply emit zero series and never fail the scrape — this resilience is by design.
+
 ### Gauges
 
-| Metric name                     | Unit | Attributes  | Description                     |
-|--------------------------------|------|-------------|---------------------------------|
-| `mikrotik.system.cpu.load`      | %    | —           | CPU load percentage             |
-| `mikrotik.system.memory.free`   | By   | —           | Available memory                |
-| `mikrotik.system.memory.total`  | By   | —           | Total memory                    |
-| `mikrotik.system.hdd.free`      | By   | —           | Free disk space                 |
-| `mikrotik.interface.up`         | 1    | `interface`, `type` | Interface operational status (1 = up) |
+| Metric name                        | Unit   | Attributes          | Description                                |
+|-----------------------------------|--------|---------------------|--------------------------------------------|
+| `mikrotik.system.cpu.load`         | %      | —                   | CPU load percentage                        |
+| `mikrotik.system.memory.free`      | By     | —                   | Available memory                           |
+| `mikrotik.system.memory.total`     | By     | —                   | Total memory                               |
+| `mikrotik.system.hdd.free`         | By     | —                   | Free disk space                            |
+| `mikrotik.interface.up`            | 1      | `interface`, `type` | Interface operational status (1 = up)      |
+| `mikrotik.system.health`           | varies | `sensor`            | Hardware sensor reading (Cel, V, A, W, 1). One series per sensor |
+| `mikrotik.dhcp.leases`             | 1      | `server`, `status`  | DHCP leases per server and status          |
+| `mikrotik.dhcp.leases.total`       | 1      | —                   | Total DHCP leases (always emitted, even 0) |
+| `mikrotik.connections.active`      | 1      | —                   | Currently tracked firewall connections     |
+| `mikrotik.connections.max`         | 1      | —                   | Maximum tracked connection capacity        |
+| `mikrotik.ip.addresses`            | 1      | —                   | Number of configured IP addresses          |
+| `mikrotik.ip.routes`               | 1      | —                   | Number of routes in the routing table      |
+| `mikrotik.wireless.clients`        | 1      | `interface`         | Connected wireless clients per radio       |
 
 ### Counters (cumulative)
 
-| Metric name                        | Unit | Attributes     | Description                          |
-|------------------------------------|------|----------------|--------------------------------------|
-| `mikrotik.system.uptime`           | s    | —              | System uptime                        |
-| `mikrotik.interface.rx.bytes`      | By   | `interface`, `type` | Bytes received on interface    |
-| `mikrotik.interface.tx.bytes`      | By   | `interface`, `type` | Bytes transmitted on interface |
-| `mikrotik.interface.rx.packets`    | 1    | `interface`, `type` | Packets received on interface  |
-| `mikrotik.interface.tx.packets`    | 1    | `interface`, `type` | Packets transmitted on interface|
+| Metric name                           | Unit | Attributes                          | Description                              |
+|---------------------------------------|------|-------------------------------------|------------------------------------------|
+| `mikrotik.system.uptime`              | s    | —                                   | System uptime                            |
+| `mikrotik.interface.rx.bytes`         | By   | `interface`, `type`                 | Bytes received on interface              |
+| `mikrotik.interface.tx.bytes`         | By   | `interface`, `type`                 | Bytes transmitted on interface           |
+| `mikrotik.interface.rx.packets`       | 1    | `interface`, `type`                 | Packets received on interface            |
+| `mikrotik.interface.tx.packets`       | 1    | `interface`, `type`                 | Packets transmitted on interface         |
+| `mikrotik.firewall.filter.bytes`      | By   | `chain`, `action`, `comment` (*)    | Cumulative bytes per firewall rule       |
+| `mikrotik.firewall.filter.packets`    | 1    | `chain`, `action`, `comment` (*)    | Cumulative packets per firewall rule     |
 
 Interface metrics carry two resource attributes:
 - `interface` — the interface name (e.g. `ether1`, `wlan1`)
 - `type` — the interface type (e.g. `ether`, `wlan`, `bridge`)
+
+Firewall metrics carry:
+- `chain` — the firewall chain (e.g. `forward`, `input`)
+- `action` — the rule action (e.g. `accept`, `drop`)
+- `comment` — the rule comment label; **only present when the rule has a comment**
 
 ### Exporter-specific notes
 
