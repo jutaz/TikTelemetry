@@ -58,10 +58,16 @@ func (l *logsPipeline) consumeLogs(ctx context.Context, entries []model.LogEntry
 		r.SetSeverity(sev)
 		r.SetSeverityText(severityText(entry.Severity()))
 		r.SetBody(log.StringValue(entry.Message))
-		r.AddAttributes(
+		attrs := []log.KeyValue{
 			log.String("topics", strings.Join(entry.Topics, ",")),
 			log.String("source", "mikrotik"),
-		)
+		}
+		// target distinguishes which router the log came from in a multi-router
+		// hub deployment (parity with the Loki exporter's target stream label).
+		if entry.Target != "" {
+			attrs = append(attrs, log.String("target", entry.Target))
+		}
+		r.AddAttributes(attrs...)
 		l.logger.Emit(ctx, r)
 	}
 	return nil

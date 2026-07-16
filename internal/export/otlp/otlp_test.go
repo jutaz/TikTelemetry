@@ -168,6 +168,7 @@ func TestEndToEndPush(t *testing.T) {
 	if err := sink.ConsumeLogs(context.Background(), []model.LogEntry{{
 		Message: "test log message",
 		Topics:  []string{"system", "error"},
+		Target:  "router-x",
 		Time:    time.Now(),
 	}}); err != nil {
 		t.Fatalf("ConsumeLogs error: %v", err)
@@ -290,6 +291,9 @@ func assertLogPayload(t *testing.T, body []byte) {
 				// Severity: topics {system, error} -> Error (see model.Severity).
 				if lr.GetSeverityText() != "ERROR" {
 					t.Errorf("log severity text = %q, want ERROR", lr.GetSeverityText())
+				}
+				if tgt := attrString(lr.GetAttributes(), "target"); tgt != "router-x" {
+					t.Errorf("log attribute target = %q, want router-x", tgt)
 				}
 				if src := attrString(lr.GetAttributes(), "source"); src != "mikrotik" {
 					t.Errorf("log attribute source = %q, want mikrotik", src)
