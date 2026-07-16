@@ -15,6 +15,7 @@ import (
 
 	"github.com/klauspost/compress/snappy"
 
+	"github.com/jutaz/tiktelemetry/internal/agent"
 	"github.com/jutaz/tiktelemetry/internal/config"
 	"github.com/jutaz/tiktelemetry/internal/export"
 	"github.com/jutaz/tiktelemetry/internal/mikrotik"
@@ -204,4 +205,70 @@ func truncate(b []byte, n int) string {
 		return string(b[:n]) + "..."
 	}
 	return string(b)
+}
+
+// TestPipelineMultiRouterHub drives the full agent as a hub against the shared
+// CHR registered under TWO target names, runs one parallel scrape, and asserts
+// the pushed Prometheus payload carries both target labels — proving the
+// multi-router path end to end against real RouterOS.
+func TestPipelineMultiRouterHub(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	cs := newCaptureServer(t)
+
+	// Point two named targets at the same live router.
+	t.Setenv("ROUTERS", "hub-a@"+sharedRouter.addr+",hub-b@"+sharedRouter.addr)
+	if sharedRouter.pass == "" {
+		// CHR default is a blank password; config requires a non-empty one, so
+		// set a placeholder and rely on the router accepting blank via the API.
+		// When ROUTEROS_PASS is set (real device), use it.
+		t.Setenv("ROUTER_PASS", "x")
+	} else {
+		t.Setenv("ROUTER_PASS", sharedRouter.pass)
+	}
+	if sharedRouter.user != "" {
+		t.Setenv("ROUTER_USER", sharedRouter.user)
+	}
+	t.Setenv("EXPORTERS", "prometheus")
+	t.Setenv("PROMETHEUS_ENDPOINT", cs.server.URL+"/api/prom/push")
+	t.Setenv("PROMETHEUS_USER", "12345")
+	t.Setenv("PROMETHEUS_PASS", "token")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	sinks, err := export.Build(ctx, cfg, logger)
+	if err != nil {
+		t.Fatalf("export.Build: %v", err)
+	}
+	defer sinks.Shutdown(ctx)
+
+	a := agent.New(cfg, logger, sinks)
+	a.ScrapeOnce(ctx)
+
+	if cs.count() == 0 {
+		t.Fatal("prometheus capture server received no requests")
+	}
+
+	// Concatenate all decoded bodies and confirm both target labels are present.
+	var all strings.Builder
+	for _, body := range cs.bodies() {
+		decoded, derr := snappy.Decode(nil, body)
+		if derr != nil {
+			t.Fatalf("snappy decode: %v", derr)
+		}
+		all.Write(decoded)
+	}
+	payload := all.String()
+	for _, target := range []string{"hub-a", "hub-b"} {
+		if !strings.Contains(payload, target) {
+			t.Errorf("prometheus payload missing target %q", target)
+		}
+	}
+	if !strings.Contains(payload, "tiktelemetry_router_up") {
+		t.Error("payload missing agent self-metric tiktelemetry_router_up")
+	}
 }

@@ -100,6 +100,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
+// ScrapeOnce runs a single scrape/push cycle across all routers and returns. It
+// is used for one-shot execution and by tests; Run calls the same underlying
+// path on every tick.
+func (a *Agent) ScrapeOnce(ctx context.Context) {
+	a.scrapeAll(ctx)
+}
+
 // closeAll closes every router client.
 func (a *Agent) closeAll() {
 	for _, t := range a.targets {
