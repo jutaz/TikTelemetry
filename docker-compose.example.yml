@@ -28,13 +28,10 @@ services:
     env_file: .env
 
     environment:
-      # Soft memory ceiling (recommended for constrained devices)
+      # Soft memory ceiling (recommended for constrained devices).
       GOMEMLIMIT: ${GOMEMLIMIT:-24MiB}
 
     mem_limit: 64m
 
-    # RouterOS API port (plain-text). Listen is on the router, not the
-    # container — included for clarity.
-    expose:
-      - 8728
-      - 8729
+    # The agent makes only OUTBOUND connections (to the router API and to your
+    # telemetry backend). It exposes no ports of its own.

@@ -8,6 +8,7 @@ exporters.
 
 - Go 1.25 or newer.
 - Docker (only for the end-to-end tests).
+- Node/`npx` (for the doc-reference check in `make docs` / `make check`).
 - Optional: [`golangci-lint`](https://golangci-lint.run) for linting.
 
 ## Common tasks

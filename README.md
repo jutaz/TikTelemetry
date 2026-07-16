@@ -90,21 +90,31 @@ You can combine exporters freely, e.g. `EXPORTERS=otlp,loki` pushes to an OTLP b
 
 ## Quick start
 
+> **Pre-release note.** A pre-built image is not published to a registry yet, so `ghcr.io/jutaz/tiktelemetry:latest` below will not pull. Until the first release, build the image locally first:
+>
+> ```bash
+> docker build -t tiktelemetry:local .
+> ```
+>
+> Then use `tiktelemetry:local` in place of `ghcr.io/jutaz/tiktelemetry:latest` in the commands below (the `docker-compose.example.yml` already has a commented `build: .` line you can uncomment instead).
+
 ### 1. Create a RouterOS API user
 
-Upload and run [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) on your MikroTik router:
+Get [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) onto the router (drag it into **Files** in WinBox, or `scp` it), then run:
 
 ```
 /import routeros-setup.rsc
 ```
 
-Or manually (after reviewing the script):
+Or just paste these three lines into the router terminal (WinBox / SSH) — no file transfer needed:
 
 ```
 /user group add name=telemetry policy=api,read,test
 /user add name=tiktelemetry group=telemetry password="CHANGE_ME"
 /ip service set api disabled=no
 ```
+
+> Running a **hub** for several routers? Run this on **each** router you want to monitor (the same credentials can be shared across them).
 
 ### 2. Configure the agent (Grafana Cloud native — recommended)
 
@@ -173,7 +183,7 @@ docker run --rm --env-file .env ghcr.io/jutaz/tiktelemetry:latest --check
 ```
 
 ```
-tiktelemetry v1.0.0 — preflight check
+tiktelemetry dev — preflight check
 
 [PASS] router-api             connected to 192.168.88.1:8728 — board "RB4011iGS+", RouterOS "7.21.5 (stable)", arch "arm64"
 [PASS] exporter:prometheus    reachable — TLS handshake OK to prometheus-prod-42-prod-us-east-0.grafana.net:443
@@ -282,7 +292,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `ROUTERS`                   | no       | —                     | Comma-separated `name@host:port` list of routers to scrape. Each `name` becomes the `target` label. **Replaces** `ROUTER_ADDRESS` when set. Example: `core@192.168.88.1:8728,cap-office@192.168.88.2:8728` |
 | `ROUTER_ADDRESS`            | no       | `192.168.88.1:8728`   | Single-router shorthand — only used when `ROUTERS` is unset |
 | `ROUTER_USER`               | no       | `admin`               | Shared RouterOS API user for all routers    |
-| `ROUTER_PASS`               | **yes**  | *(no default)*        | Shared RouterOS API password               |
+| `ROUTER_PASS`               | yes\*    | *(no default)*        | Shared RouterOS API password (\* required unless every router sets a `ROUTER_<NAME>_PASS` override) |
 | `ROUTER_TLS`                | no       | `false`               | Use API-SSL (port typically 8729)          |
 | `ROUTER_TLS_INSECURE`       | no       | `false`               | Skip TLS cert verification                 |
 | `ROUTER_DIAL_TIMEOUT`       | no       | `5s`                  | Dial timeout (Go duration format)          |
