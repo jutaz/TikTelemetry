@@ -44,13 +44,14 @@ jobs:
           go vet -tags e2e ./test/e2e/...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           # Pin a golangci-lint v2 built with Go 1.25+; older builds refuse to
           # analyze code whose go.mod targets a newer Go than the linter's own
+          # Go version than the linter's own
           # toolchain ("the Go language version ... is lower than the targeted
           # Go version"). The config in .golangci.yml is v2 format, which needs
-          # action v8 + golangci-lint v2.
+          # action v8+ + golangci-lint v2.
           version: v2.5.0
 
   docs:
@@ -92,7 +93,7 @@ jobs:
         run: go test ./... -count=1 -race -covermode=atomic -coverprofile=coverage.out
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
