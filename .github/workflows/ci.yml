@@ -145,14 +145,15 @@ jobs:
     name: End-to-end (RouterOS CHR)
     runs-on: ubuntu-latest
     # E2E boots a real MikroTik CHR under QEMU on the runner and drives the
-    # full agent against it. Two things make this deterministic:
-    #   1. The harness attaches the container to two dedicated networks so the
-    #      image reliably sees `eth1` and enables QEMU host-port forwarding
-    #      (see test/e2e/harness_test.go for the full rationale).
-    #   2. KVM acceleration below turns the ~5min TCG boot into ~30-60s, well
-    #      inside the wait budget. GitHub's standard Linux runners expose
-    #      /dev/kvm via nested virtualization; the udev rule makes it usable
-    #      without a group/session dance.
+    # full agent against it. Reliability comes from two things:
+    #   1. The harness bypasses the image's slow IDE/tap entrypoint and boots
+    #      QEMU directly with a virtio disk + virtio-net over SLIRP, which is
+    #      2-4x faster on slow nested-KVM CPU SKUs (see harness_test.go's
+    #      qemuBootScript for the full rationale).
+    #   2. KVM acceleration below turns the multi-minute TCG boot into ~30-45s.
+    #      GitHub's standard Linux runners expose /dev/kvm via nested
+    #      virtualization; the udev rule makes it usable without a
+    #      group/session dance.
     # Skip on fork PRs where Docker/KVM behavior is less predictable.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:

@@ -32,7 +32,6 @@ import (
 	"github.com/go-routeros/routeros/v3"
 	"github.com/moby/moby/api/types/container"
 	"github.com/testcontainers/testcontainers-go"
-	tcnetwork "github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
@@ -45,18 +44,16 @@ const (
 	routerPass = "" // CHR default: admin with a blank password.
 
 	// apiReadyTimeout bounds how long we wait for the RouterOS binary API to
-	// accept a login for a single container attempt. The API service (port
-	// 8728) comes up LATE in the boot, well after the login prompt, and on slow
-	// GitHub-runner CPU SKUs (e.g. Intel Emerald Rapids, which has a known
-	// nested-KVM slowdown) that can be 60-180s even with hardware
-	// acceleration. Budget generously so a slow-but-healthy boot is not killed
-	// prematurely — that was the main cause of e2e flakiness.
-	apiReadyTimeout = 6 * time.Minute
+	// accept a login for a single container attempt. With the virtio boot (see
+	// qemuBootScript) the guest reaches an API login in ~30-45s even on slow
+	// KVM SKUs; without KVM (TCG) it can take a few minutes. Budget generously
+	// so a slow-but-healthy boot is never killed prematurely.
+	apiReadyTimeout = 5 * time.Minute
 
 	// bootAttempts recreates the container only as a safety net for a genuinely
-	// crashed QEMU (container exited), NOT to paper over slow boots — the long
-	// apiReadyTimeout above already absorbs slow SKUs. Kept small so we do not
-	// throw away a container that was seconds from becoming ready.
+	// crashed QEMU (container exited), NOT to paper over slow boots — the
+	// apiReadyTimeout above already absorbs those. Kept small so we do not throw
+	// away a container that was seconds from becoming ready.
 	bootAttempts = 2
 )
 
@@ -111,100 +108,79 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 
 	log.Printf("starting RouterOS container from %s (this can take a minute)", routerImage)
 
-	// The image's entrypoint only enables QEMU host-port forwarding (SLIRP
-	// `-nic user,hostfwd=...`, which is what makes the API reachable through
-	// Docker's published port) when a *second* interface `eth1` exists inside
-	// the container at boot. See /routeros_source/entrypoint.sh: it runs
-	// `ip link show eth1` once and sets USE_HOSTFWD=1 only if eth1 is present.
-	//
-	// We therefore attach the container to TWO dedicated networks. The first
-	// becomes eth0 (and carries Docker's published port), the second becomes
-	// eth1 (and triggers the hostfwd path). We deliberately do NOT use the
-	// default `bridge` network by name: on some Docker daemons (notably GitHub
-	// runners) the create-time vs connect-time interface ordering of
-	// `["bridge", custom]` is non-deterministic, so eth1 sometimes does not
-	// exist when the entrypoint probes for it — the API port then never
-	// forwards and the login handshake is dropped (EOF / reset after TCP
-	// connect). Two explicit custom networks make eth1's presence
-	// deterministic across daemons.
-	netA, err := tcnetwork.New(ctx)
-	if err != nil {
-		return router{}, nil, fmt.Errorf("create routeros network A: %w", err)
-	}
-	netB, err := tcnetwork.New(ctx)
-	if err != nil {
-		_ = netA.Remove(ctx)
-		return router{}, nil, fmt.Errorf("create routeros network B: %w", err)
-	}
-	removeNets := func() {
-		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := netA.Remove(cctx); err != nil {
-			log.Printf("remove routeros network A: %v", err)
-		}
-		if err := netB.Remove(cctx); err != nil {
-			log.Printf("remove routeros network B: %v", err)
-		}
-	}
-
-	// A CHR boot occasionally stalls even with KVM. Recreating the container is
-	// far more reliable than waiting longer, so try a fresh QEMU up to
-	// bootAttempts times before giving up.
+	// A CHR boot occasionally crashes QEMU outright (container exits). Recreate
+	// the container up to bootAttempts times before giving up. Slow-but-healthy
+	// boots are handled by the generous apiReadyTimeout, not by retrying.
 	var lastErr error
 	for attempt := 1; attempt <= bootAttempts; attempt++ {
 		if ctx.Err() != nil {
-			removeNets()
 			return router{}, nil, fmt.Errorf("context cancelled before RouterOS was ready: %w", ctx.Err())
 		}
 		log.Printf("RouterOS container boot attempt %d/%d", attempt, bootAttempts)
 
-		r, stop, err := bootRouterContainer(ctx, netA.Name, netB.Name)
+		r, stop, err := bootRouterContainer(ctx)
 		if err == nil {
-			cleanup := func() {
-				stop()
-				removeNets()
-			}
-			return r, cleanup, nil
+			return r, stop, nil
 		}
 		lastErr = err
 		log.Printf("boot attempt %d/%d failed: %v", attempt, bootAttempts, err)
 	}
 
-	removeNets()
 	return router{}, nil, fmt.Errorf("RouterOS never became ready after %d attempts: %w", bootAttempts, lastErr)
 }
 
-// bootRouterContainer starts one CHR container on the given networks and waits
-// for its API to accept a login. On any failure it dumps diagnostics, tears the
-// container down, and returns an error so the caller can retry with a fresh one.
-// The returned stop function terminates the container (networks are the
-// caller's responsibility so they can be reused across attempts).
-func bootRouterContainer(ctx context.Context, netAName, netBName string) (router, func(), error) {
+// qemuBootScript is the container entrypoint we inject to boot the CHR. It
+// deliberately bypasses the image's own entrypoint, which boots the guest off
+// an emulated IDE disk (`-hda`) behind a tap/bridge and only enables host-port
+// forwarding when a second `eth1` interface happens to exist. That setup is
+// both fragile (eth1 ordering) and slow: on GitHub-runner CPU SKUs with slow
+// nested KVM (e.g. Intel Emerald Rapids) the IDE I/O emulation pushes
+// boot-to-API past several minutes and the suite flakes.
+//
+// Instead we run QEMU directly with a paravirtualised virtio disk and
+// virtio-net NIC over plain SLIRP user networking (hostfwd for the API port).
+// Virtio replaces per-register IDE traps with a batched shared-memory ring, so
+// boot is 2-4x faster on the same slow hosts, and pure SLIRP removes the eth1
+// dependency entirely (Docker just publishes 8728). KVM is used when /dev/kvm
+// is writable, otherwise QEMU falls back to TCG so KVM-less hosts still run.
+//
+// The VDI is read directly by QEMU (format=vdi); no qemu-img conversion is
+// needed. The disk lives at /routeros_source/<image>.vdi in the image.
+const qemuBootScript = `set -e
+img="/routeros_source/${ROUTEROS_IMAGE}"
+accel=""
+cpu="qemu64"
+if [ -w /dev/kvm ]; then
+  accel="-enable-kvm"
+  cpu="host,kvm=on"
+  echo "tiktelemetry-e2e: KVM available, enabling hardware acceleration"
+else
+  echo "tiktelemetry-e2e: KVM unavailable, using TCG (slow)"
+fi
+exec qemu-system-x86_64 \
+  -display none -serial mon:stdio \
+  ${accel} -cpu "${cpu}" -m 512 -smp 2 \
+  -drive file="${img}",format=vdi,if=virtio \
+  -netdev user,id=net0,hostfwd=tcp::8728-:8728 \
+  -device virtio-net-pci,netdev=net0
+`
+
+// bootRouterContainer starts one CHR container and waits for its API to accept
+// a login. On any failure it dumps diagnostics, tears the container down, and
+// returns an error so the caller can retry with a fresh one.
+func bootRouterContainer(ctx context.Context) (router, func(), error) {
 	req := testcontainers.ContainerRequest{
 		Image:        routerImage,
 		ExposedPorts: []string{"8728/tcp"},
-		Networks:     []string{netAName, netBName},
-		// NOTE on vCPUs: the image hardcodes `-smp 4`. It is tempting to lower
-		// this to match GitHub's 2-vCPU runners, but this image boots the guest
-		// off an emulated IDE disk (not virtio), which is slow enough that
-		// FEWER vCPUs makes boot *slower*, not faster (verified: `-smp 1` times
-		// out even on a fast host). The default `-smp 4` boots fastest here, so
-		// we leave it and instead absorb slow runner CPU SKUs with a generous
-		// apiReadyTimeout.
+		// Override the image entrypoint to boot QEMU with virtio directly (see
+		// qemuBootScript). Pure SLIRP means no second network / eth1 dance.
+		Entrypoint: []string{"sh", "-c", qemuBootScript},
 		HostConfigModifier: func(hc *container.HostConfig) {
-			hc.CapAdd = append(hc.CapAdd, "NET_ADMIN")
-			hc.Devices = append(hc.Devices, container.DeviceMapping{
-				PathOnHost:        "/dev/net/tun",
-				PathInContainer:   "/dev/net/tun",
-				CgroupPermissions: "rwm",
-			})
-			// Pass /dev/kvm through when the host exposes it so QEMU runs with
-			// hardware acceleration (-enable-kvm) instead of falling back to TCG
-			// software emulation. Without this the CHR boot takes 5+ minutes and
-			// blows the API-ready budget; with it the guest is up in ~30-60s.
-			// The host's /dev/kvm existing does NOT help unless the device is
-			// actually mapped into the container. Guarded so hosts without KVM
-			// (e.g. some laptops) still run, just slowly.
+			// Pass /dev/kvm through when the host exposes it so QEMU accelerates
+			// with -enable-kvm instead of falling back to slow TCG emulation.
+			// The host having /dev/kvm does NOT help unless it is mapped into the
+			// container. Guarded so KVM-less hosts (e.g. macOS/Windows Docker
+			// Desktop) still run, just slower.
 			if _, err := os.Stat("/dev/kvm"); err == nil {
 				hc.Devices = append(hc.Devices, container.DeviceMapping{
 					PathOnHost:        "/dev/kvm",
@@ -213,8 +189,8 @@ func bootRouterContainer(ctx context.Context, netAName, netBName string) (router
 				})
 			}
 		},
-		// A listening TCP port only means QEMU forwards it; real readiness is
-		// the API login probe in waitForAPI.
+		// A listening TCP port only means QEMU/SLIRP forwards it; real readiness
+		// is the API login probe in waitForAPI.
 		WaitingFor: wait.ForListeningPort("8728/tcp").WithStartupTimeout(apiReadyTimeout),
 	}
 
@@ -254,25 +230,16 @@ func bootRouterContainer(ctx context.Context, netAName, netBName string) (router
 	return r, stop, nil
 }
 
-// dumpContainerDiagnostics logs the container's network interfaces and recent
-// stdout when the API never became ready. This distinguishes the two failure
-// modes we care about: a missing `eth1` (so the entrypoint never enabled
-// hostfwd — look for "KVM not available"/no hostfwd) versus a genuinely slow
-// CHR boot. Best-effort: any error here is itself logged and ignored.
+// dumpContainerDiagnostics logs the container's recent stdout (the QEMU serial
+// console) when the API never became ready, so a CI failure shows whether KVM
+// engaged and how far the guest booted. Best-effort: any error here is itself
+// logged and ignored.
 func dumpContainerDiagnostics(ctx context.Context, ctr testcontainers.Container) {
-	if code, reader, err := ctr.Exec(ctx, []string{"ip", "-o", "link", "show"}); err == nil {
-		buf := new(strings.Builder)
-		_, _ = io.Copy(buf, reader)
-		log.Printf("e2e diag: container interfaces (exit %d):\n%s", code, buf.String())
-	} else {
-		log.Printf("e2e diag: could not list container interfaces: %v", err)
-	}
-
 	if reader, err := ctr.Logs(ctx); err == nil {
 		defer func() { _ = reader.Close() }()
 		buf := new(strings.Builder)
 		_, _ = io.Copy(buf, reader)
-		log.Printf("e2e diag: container logs:\n%s", buf.String())
+		log.Printf("e2e diag: QEMU serial console:\n%s", buf.String())
 	} else {
 		log.Printf("e2e diag: could not read container logs: %v", err)
 	}

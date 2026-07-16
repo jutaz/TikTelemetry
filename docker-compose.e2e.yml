@@ -8,34 +8,49 @@
 #   ROUTEROS_ADDR=127.0.0.1:8728 go test -tags e2e -count=1 ./test/e2e/...
 #   docker compose -f docker-compose.e2e.yml down
 #
-# Default credentials are admin with a blank password. The binary API is
-# enabled by default on CHR and forwarded on 8728.
+# Default credentials are admin with a blank password.
 #
-# Two networks are required: with a second interface (eth1) present, the image's
-# entrypoint enables QEMU host port forwarding on eth0 so the API is reachable
-# from the host. With a single network the API port is not forwarded.
+# This mirrors the testcontainers harness (test/e2e/harness_test.go): it
+# bypasses the image's own entrypoint and boots QEMU directly with a
+# paravirtualised virtio disk + virtio-net NIC over plain SLIRP user
+# networking, forwarding the binary API on 8728. Virtio boots the guest 2-4x
+# faster than the image's default emulated IDE disk on slow hosts, and pure
+# SLIRP removes the need for a second interface / NET_ADMIN / /dev/net/tun.
 services:
   routeros:
     image: evilfreelancer/docker-routeros:7
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
-      # Hardware acceleration: QEMU only uses KVM if /dev/kvm is mapped INTO
-      # the container (the host merely having it is not enough). With it the
-      # CHR boots in ~30-60s; without it QEMU falls back to slow TCG emulation
-      # and boot takes 5+ minutes. Comment this line out on hosts that do not
-      # expose /dev/kvm (e.g. macOS/Windows Docker Desktop) — boot will just be
-      # slower.
-      - /dev/kvm
+    # Hardware acceleration: uncomment on Linux hosts that expose /dev/kvm to
+    # map it INTO the container (the host merely having it is not enough). The
+    # entrypoint below auto-detects it and falls back to TCG when absent, so
+    # leave this commented on macOS/Windows Docker Desktop (which have no
+    # /dev/kvm) — boot is just slower there.
+    # devices:
+    #   - /dev/kvm
     ports:
       - "8728:8728" # RouterOS binary API
-      - "8729:8729" # RouterOS API-SSL
-    networks:
-      - default
-      - routeros_net
-
-networks:
-  routeros_net:
-    driver: bridge
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        # The :7 tag pins RouterOS 7.21.5, so the disk path is fixed. (The Go
+        # harness derives this from the image's $ROUTEROS_IMAGE env var, but
+        # compose eats both variable and command interpolation in this block,
+        # so it is named literally here.)
+        img="/routeros_source/chr-7.21.5.vdi"
+        accel=""
+        cpu="qemu64"
+        if [ -w /dev/kvm ]; then
+          accel="-enable-kvm"
+          cpu="host,kvm=on"
+          echo "tiktelemetry-e2e: KVM available, enabling hardware acceleration"
+        else
+          echo "tiktelemetry-e2e: KVM unavailable, using TCG (slow)"
+        fi
+        exec qemu-system-x86_64 \
+          -display none -serial mon:stdio \
+          $${accel} -cpu "$${cpu}" -m 512 -smp 2 \
+          -drive file="$${img}",format=vdi,if=virtio \
+          -netdev user,id=net0,hostfwd=tcp::8728-:8728 \
+          -device virtio-net-pci,netdev=net0
