@@ -337,6 +337,22 @@ Firewall metrics carry:
 - `action` — the rule action (e.g. `accept`, `drop`)
 - `comment` — the rule comment label; **only present when the rule has a comment**
 
+### Agent self-metrics
+
+TikTelemetry also reports on **its own** health, pushed through the same pipeline (prefixed `tiktelemetry.`) so you can tell whether the agent is working without a separate endpoint. Crucially, these are emitted even when the router is unreachable — so `tiktelemetry.router.up` drops to `0` rather than the series vanishing. They require a metrics-capable exporter (`otlp` or `prometheus`).
+
+| Metric name                        | Unit | Kind    | Attributes   | Description                                       |
+|------------------------------------|------|---------|--------------|---------------------------------------------------|
+| `tiktelemetry.router.up`           | 1    | gauge   | —            | Router API reachable during the last scrape (1/0) |
+| `tiktelemetry.scrape.duration`     | ms   | gauge   | —            | Duration of the last metric scrape                |
+| `tiktelemetry.scrape.samples`      | 1    | gauge   | —            | Samples collected in the last scrape              |
+| `tiktelemetry.scrapes.total`       | 1    | counter | —            | Total metric scrapes performed                    |
+| `tiktelemetry.collector.errors`    | 1    | counter | `collector`  | Collector failures, per collector                 |
+| `tiktelemetry.export.errors`       | 1    | counter | `signal`     | Export failures (`signal=metrics` or `logs`)      |
+| `tiktelemetry.log.collect.errors`  | 1    | counter | —            | Log collection failures                           |
+
+Useful alerts: `tiktelemetry_router_up == 0` (agent can't reach the router), `rate(tiktelemetry_export_errors[5m]) > 0` (telemetry not landing), or a rising `tiktelemetry_collector_errors`.
+
 ### Exporter-specific notes
 
 - **OTLP exporter** — metric names are sent as-is using dot-separated namespacing (`mikrotik.system.cpu.load`). Counters use delta temporality.

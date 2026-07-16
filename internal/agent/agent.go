@@ -25,6 +25,10 @@ type Agent struct {
 
 	sinks *export.MultiSink
 
+	// self accumulates the agent's own operational metrics (scrape health,
+	// errors, router reachability).
+	self *selfMetrics
+
 	// wantMetrics / wantLogs cache whether any sink consumes each signal, so we
 	// skip the corresponding router queries entirely when nothing wants them.
 	wantMetrics bool
@@ -45,6 +49,7 @@ func New(cfg config.Config, logger *slog.Logger, sinks *export.MultiSink) *Agent
 		client:      mikrotik.New(cfg.Router, logger),
 		collectors:  collectors,
 		sinks:       sinks,
+		self:        newSelfMetrics(),
 		wantMetrics: sinks.WantsMetrics(),
 		wantLogs:    sinks.WantsLogs(),
 	}
@@ -103,25 +108,35 @@ func (a *Agent) scrape(ctx context.Context) {
 }
 
 func (a *Agent) scrapeMetrics(ctx context.Context) {
+	start := time.Now()
+
 	var all []model.Sample
+	routerReached := false
 	for _, coll := range a.collectors {
 		samples, err := coll.Collect(ctx, a.client)
 		if err != nil {
 			a.logger.Warn("collector failed",
 				"collector", coll.Name(), "error", err)
+			a.self.recordCollectorError(coll.Name())
 			continue
 		}
+		// A collector that ran without error means the router API was reachable.
+		routerReached = true
 		all = append(all, samples...)
 	}
 
-	if len(all) == 0 {
-		return
-	}
+	// Record the agent's own health for this scrape and append those samples so
+	// they ship with the router metrics. Self-metrics are emitted even when the
+	// router is unreachable so `tiktelemetry.router.up` reports 0 rather than
+	// disappearing.
+	a.self.recordScrape(time.Since(start).Milliseconds(), int64(len(all)), routerReached)
+	all = append(all, a.self.samples()...)
 
 	// MultiSink logs per-sink failures itself; surface a joined error here at
 	// warn level so a persistently failing synchronous exporter (Prometheus /
 	// Loki) is visible in the agent's own log, not just the sink's.
 	if err := a.sinks.ConsumeMetrics(ctx, all); err != nil {
+		a.self.recordMetricExportError()
 		a.logger.Warn("one or more exporters rejected metrics", "error", err)
 	}
 	a.logger.Debug("metrics collected", "samples", len(all))
@@ -130,6 +145,7 @@ func (a *Agent) scrapeMetrics(ctx context.Context) {
 func (a *Agent) scrapeLogs(ctx context.Context) {
 	entries, err := a.logColl.Collect(ctx, a.client)
 	if err != nil {
+		a.self.recordLogCollectError()
 		a.logger.Warn("log collection failed", "error", err)
 		return
 	}
@@ -137,6 +153,7 @@ func (a *Agent) scrapeLogs(ctx context.Context) {
 		return
 	}
 	if err := a.sinks.ConsumeLogs(ctx, entries); err != nil {
+		a.self.recordLogExportError()
 		a.logger.Warn("one or more exporters rejected logs", "error", err)
 	}
 	a.logger.Debug("logs collected", "entries", len(entries))
