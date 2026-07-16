@@ -44,16 +44,20 @@ const (
 	routerUser = "admin"
 	routerPass = "" // CHR default: admin with a blank password.
 
-	// apiReadyTimeout bounds how long we wait for the RouterOS API to accept a
-	// login for a single container attempt. With KVM the CHR is up in ~30-60s;
-	// occasionally a boot stalls, in which case a fresh container (see
-	// bootAttempts) recovers far more reliably than waiting longer.
-	apiReadyTimeout = 3 * time.Minute
+	// apiReadyTimeout bounds how long we wait for the RouterOS binary API to
+	// accept a login for a single container attempt. The API service (port
+	// 8728) comes up LATE in the boot, well after the login prompt, and on slow
+	// GitHub-runner CPU SKUs (e.g. Intel Emerald Rapids, which has a known
+	// nested-KVM slowdown) that can be 60-180s even with hardware
+	// acceleration. Budget generously so a slow-but-healthy boot is not killed
+	// prematurely — that was the main cause of e2e flakiness.
+	apiReadyTimeout = 6 * time.Minute
 
-	// bootAttempts is how many times we recreate the container if the API never
-	// becomes ready. A stalled CHR boot does not self-heal, so a fresh QEMU is
-	// the reliable recovery. Total worst case: bootAttempts * apiReadyTimeout.
-	bootAttempts = 3
+	// bootAttempts recreates the container only as a safety net for a genuinely
+	// crashed QEMU (container exited), NOT to paper over slow boots — the long
+	// apiReadyTimeout above already absorbs slow SKUs. Kept small so we do not
+	// throw away a container that was seconds from becoming ready.
+	bootAttempts = 2
 )
 
 // router describes a reachable RouterOS API endpoint for the tests.
@@ -180,15 +184,13 @@ func bootRouterContainer(ctx context.Context, netAName, netBName string) (router
 		Image:        routerImage,
 		ExposedPorts: []string{"8728/tcp"},
 		Networks:     []string{netAName, netBName},
-		// The image's entrypoint hardcodes `-smp 4,sockets=1,cores=4,threads=1`
-		// but passes the container command through to QEMU as trailing args
-		// (`run_qemu "$@"`), and QEMU uses the LAST `-smp` given. GitHub's
-		// standard runners have only 2 vCPUs; requesting 4 vCPUs on a 2-vCPU KVM
-		// host consistently stalls the CHR guest at the boot banner (the API
-		// service never comes up — login is reset). Override with a full,
-		// self-consistent 2-vCPU topology so the product still matches maxcpus
-		// (a bare `-smp 2` is rejected because the earlier cores=4 lingers).
-		Cmd: []string{"-smp", "2,sockets=1,cores=2,threads=1"},
+		// NOTE on vCPUs: the image hardcodes `-smp 4`. It is tempting to lower
+		// this to match GitHub's 2-vCPU runners, but this image boots the guest
+		// off an emulated IDE disk (not virtio), which is slow enough that
+		// FEWER vCPUs makes boot *slower*, not faster (verified: `-smp 1` times
+		// out even on a fast host). The default `-smp 4` boots fastest here, so
+		// we leave it and instead absorb slow runner CPU SKUs with a generous
+		// apiReadyTimeout.
 		HostConfigModifier: func(hc *container.HostConfig) {
 			hc.CapAdd = append(hc.CapAdd, "NET_ADMIN")
 			hc.Devices = append(hc.Devices, container.DeviceMapping{
