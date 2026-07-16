@@ -95,9 +95,10 @@ device.
 **A1.** A malicious router could return an enormous `/log/print` or
 `/interface/print` reply to exhaust agent memory. Mitigations:
 
-- Each scrape is time-bounded by the poll interval
-  ([`Agent.scrape`](../internal/agent/agent.go#sym:fn:scrape) derives a context
-  timeout), so a slow/hung response cannot stall the loop indefinitely.
+- Each router's scrape is independently time-bounded
+  ([`Agent.scrapeAll`](../internal/agent/agent.go#sym:fn:scrapeAll) derives a
+  per-target context timeout), so a slow/hung router cannot stall the loop or
+  the other routers.
 - `GOMEMLIMIT` is set to `24MiB` in the image, so the Go runtime GCs aggressively
   and the process is far more likely to slow than to OOM-kill the router.
 - **Reply-row cap:** every RouterOS reply is truncated to `ROUTER_MAX_REPLY_ROWS`
