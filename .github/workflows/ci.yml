@@ -181,6 +181,9 @@ jobs:
           fi
           ls -l /dev/kvm
           echo "KVM acceleration is available."
+          echo "Runner CPU:"
+          grep -m1 'model name' /proc/cpuinfo || true
+          nproc
 
       - name: Run end-to-end tests
         # testcontainers-go manages the RouterOS container lifecycle. The suite
