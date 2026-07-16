@@ -13,9 +13,9 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -57,9 +57,9 @@ jobs:
     name: Doc references
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "20"
 
@@ -81,9 +81,9 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -92,7 +92,7 @@ jobs:
         run: go test ./... -count=1 -race -covermode=atomic -coverprofile=coverage.out
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage
           path: coverage.out
@@ -109,9 +109,9 @@ jobs:
           - goarch: arm64
           - goarch: amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -128,9 +128,9 @@ jobs:
     name: Vulnerability scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -143,20 +143,21 @@ jobs:
   e2e:
     name: End-to-end (RouterOS CHR)
     runs-on: ubuntu-latest
-    # E2E boots a real CHR under QEMU (TCG) on the runner. That path is
-    # inherently timing/network-sensitive — CHR boot time and the container's
-    # interface ordering vary run to run — so this job is NON-BLOCKING
-    # (continue-on-error). It still runs on every push so a genuine regression
-    # is visible, but a flaky CHR boot never red-lights the whole build or
-    # blocks a merge. Run it locally against a real device or a compose CHR via
-    # ROUTEROS_ADDR for a deterministic check.
-    continue-on-error: true
+    # E2E boots a real MikroTik CHR under QEMU on the runner and drives the
+    # full agent against it. Two things make this deterministic:
+    #   1. The harness attaches the container to two dedicated networks so the
+    #      image reliably sees `eth1` and enables QEMU host-port forwarding
+    #      (see test/e2e/harness_test.go for the full rationale).
+    #   2. KVM acceleration below turns the ~5min TCG boot into ~30-60s, well
+    #      inside the wait budget. GitHub's standard Linux runners expose
+    #      /dev/kvm via nested virtualization; the udev rule makes it usable
+    #      without a group/session dance.
     # Skip on fork PRs where Docker/KVM behavior is less predictable.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -167,6 +168,18 @@ jobs:
             sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      - name: Verify KVM is available
+        # CHR under pure TCG emulation can take 5+ minutes to boot and flakes
+        # the wait budget. Fail loudly here if /dev/kvm is missing so the
+        # cause is obvious, rather than letting the suite time out later.
+        run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm is not present on this runner; CHR boot would run under slow TCG emulation."
+            exit 1
+          fi
+          ls -l /dev/kvm
+          echo "KVM acceleration is available."
 
       - name: Run end-to-end tests
         # testcontainers-go manages the RouterOS container lifecycle. The suite
