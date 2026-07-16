@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/jutaz/tiktelemetry/internal/config"
 	"github.com/jutaz/tiktelemetry/internal/export"
+	"github.com/jutaz/tiktelemetry/internal/mikrotik"
 	"github.com/jutaz/tiktelemetry/internal/model"
 )
 
@@ -140,6 +142,63 @@ func TestAgent_RunContextCancelled(t *testing.T) {
 // the agent does not panic and returns nil (context cancellation). It runs a
 // full cycle: one scrape attempt that will fail to dial, then context
 // cancellation causes Run to return.
+// stubCollector is a Collector whose Collect returns a fixed result, so
+// scrapeMetrics can be driven without a live router.
+type stubCollector struct {
+	name    string
+	samples []model.Sample
+	err     error
+}
+
+func (c *stubCollector) Name() string { return c.name }
+func (c *stubCollector) Collect(context.Context, mikrotik.Runner) ([]model.Sample, error) {
+	return c.samples, c.err
+}
+
+// TestScrapeMetrics_FeatureAbsentIsQuiet verifies that a collector returning a
+// "feature absent" error (RouterOS !trap "no such command prefix", e.g. health
+// on a board with no sensors) is skipped quietly: no collector-error metric is
+// recorded, the router still counts as reached, and a real error is still
+// recorded.
+func TestScrapeMetrics_FeatureAbsentIsQuiet(t *testing.T) {
+	okSample := model.Sample{Name: "mikrotik.system.cpu", Value: 1}
+	tgt := &target{
+		name: "ap-basement",
+		collectors: []mikrotik.Collector{
+			&stubCollector{name: "system", samples: []model.Sample{okSample}},
+			&stubCollector{name: "health", err: errors.New("from RouterOS device: no such command prefix")},
+			&stubCollector{name: "firewall", err: errors.New("connection reset by peer")},
+		},
+		self: newSelfMetrics(),
+	}
+
+	a := &Agent{logger: quietLogger()}
+	samples := a.scrapeMetrics(context.Background(), tgt)
+
+	// The feature-absent collector must NOT be recorded as an error.
+	if n := tgt.self.collectorErrorTotal["health"]; n != 0 {
+		t.Errorf("health recorded %d collector errors, want 0 (feature absent is not a failure)", n)
+	}
+	// A genuine error still must be recorded.
+	if n := tgt.self.collectorErrorTotal["firewall"]; n != 1 {
+		t.Errorf("firewall recorded %d collector errors, want 1", n)
+	}
+	// The router answered (system succeeded, health merely lacks the command).
+	if tgt.self.routerUp != 1 {
+		t.Errorf("routerUp = %d, want 1 (the router was reached)", tgt.self.routerUp)
+	}
+	// The successful collector's sample must still flow through (plus self-metrics).
+	var sawOK bool
+	for _, s := range samples {
+		if s.Name == okSample.Name {
+			sawOK = true
+		}
+	}
+	if !sawOK {
+		t.Errorf("expected the system sample to be present in the scrape output")
+	}
+}
+
 func TestAgent_RunUnreachableRouter(t *testing.T) {
 	t.Setenv("ROUTER_PASS", "secret")
 	t.Setenv("ROUTER_ADDRESS", "127.0.0.1:1")

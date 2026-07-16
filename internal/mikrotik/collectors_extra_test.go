@@ -83,10 +83,10 @@ func TestParseNumeric(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Tests for isUnavailableCommand
+// Tests for IsFeatureAbsent
 // ---------------------------------------------------------------------------
 
-func TestIsUnavailableCommand(t *testing.T) {
+func TestIsFeatureAbsent(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
@@ -94,6 +94,9 @@ func TestIsUnavailableCommand(t *testing.T) {
 	}{
 		{"nil", nil, false},
 		{"no such command", errors.New("no such command or directory"), true},
+		// The exact message RouterOS returns for a missing command like
+		// /system/health on a board without sensors (seen in the field).
+		{"no such command prefix", errors.New("from RouterOS device: no such command prefix"), true},
 		{"bad command name", errors.New("bad command name routerboard"), true},
 		{"unknown command", errors.New("unknown command /ip/foo"), true},
 		{"syntax error", errors.New("syntax error at token"), true},
@@ -102,8 +105,8 @@ func TestIsUnavailableCommand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isUnavailableCommand(tt.err); got != tt.want {
-				t.Errorf("isUnavailableCommand(%v) = %v, want %v", tt.err, got, tt.want)
+			if got := IsFeatureAbsent(tt.err); got != tt.want {
+				t.Errorf("IsFeatureAbsent(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
 	}

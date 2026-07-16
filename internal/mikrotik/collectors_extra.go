@@ -279,7 +279,7 @@ func (c *wirelessCollector) Collect(ctx context.Context, r Runner) ([]model.Samp
 	} {
 		reply, err := r.Run(ctx, path)
 		if err != nil {
-			if isUnavailableCommand(err) {
+			if IsFeatureAbsent(err) {
 				continue
 			}
 			return nil, err
@@ -307,10 +307,15 @@ func (c *wirelessCollector) Collect(ctx context.Context, r Runner) ([]model.Samp
 	return nil, nil
 }
 
-// isUnavailableCommand reports whether an error indicates the RouterOS command
-// does not exist (e.g. the wireless package is not installed). RouterOS returns
-// a !trap with a message like "no such command or directory".
-func isUnavailableCommand(err error) bool {
+// IsFeatureAbsent reports whether an error means the RouterOS command does not
+// exist on this board (e.g. `/system/health` on a device with no sensors, or
+// the wireless package not being installed) — as opposed to a real failure.
+// RouterOS answers such a request over a healthy session with a !trap whose
+// message is like "no such command prefix" / "no such command or directory".
+//
+// Collectors and the scrape loop treat this as "feature not present": emit no
+// samples and no warning, rather than logging a recurring error every scrape.
+func IsFeatureAbsent(err error) bool {
 	if err == nil {
 		return false
 	}

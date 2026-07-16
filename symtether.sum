@@ -14,7 +14,7 @@ internal/mikrotik/client.go#capRows  ast:sha256:167f813984387b548cf818592d043f43
 internal/mikrotik/client.go#dial  ast:sha256:7cb6e41f4dace2ccae543ef850ef224696d1145923d648bcb1b28e698c6cb6f3  2026-07-16
 internal/mikrotik/collector.go#Collector  ast:sha256:ce3c9acbffc27063bbc4b7f94de4e976faf931606ddd8178e5baa1686a78ea47  2026-07-16
 internal/mikrotik/collector.go#DefaultCollectors  ast:sha256:88165885c281953324d454e60ed4b52d31a759662cffcf962747a9280933ee05  2026-07-16
-internal/mikrotik/collectors_extra.go#isUnavailableCommand  ast:sha256:f2c8cf928d401c26c617439bc8a0e39c94a511f0758333af6c311657e51932fd  2026-07-16
+internal/mikrotik/collectors_extra.go#IsFeatureAbsent  ast:sha256:f2c8cf928d401c26c617439bc8a0e39c94a511f0758333af6c311657e51932fd  2026-07-16
 internal/model/model.go#KindCounter  ast:sha256:742d8afe9be3ed32ff9bb5cbdb45fa1381ab7411204b8c7f5405dc58dc15aeaf  2026-07-16
 internal/model/model.go#KindGauge  ast:sha256:2506cc8f4bcb41a3fea78602b7ffad0d1ace63e81b3d7633a5b015421265d291  2026-07-16
 internal/preflight/preflight.go#checkEndpoint  ast:sha256:76444079df4fc3b81588810f371a28acdf3f35df64da2c922579a333dfe25a3d  2026-07-16

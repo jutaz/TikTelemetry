@@ -70,9 +70,15 @@ scripts/                  RouterOS setup and container deployment scripts.
 
 2. Register it in [`DefaultCollectors`](internal/mikrotik/collector.go#sym:fn:DefaultCollectors) and add a compile-time interface check.
 
-3. **Be resilient.** If the endpoint may not exist on all hardware (e.g.
-   wireless on a CHR), catch the "no such command" error via
-   [`isUnavailableCommand`](internal/mikrotik/collectors_extra.go#sym:fn:isUnavailableCommand) and return `nil, nil` instead of failing the scrape.
+3. **Be resilient.** A command the board simply does not have (e.g. wireless on
+   a CHR, or `/system/health` on a device with no sensors) returns a RouterOS
+   `!trap`. You do **not** need to special-case this in the collector: the
+   scrape loop recognizes it via
+   [`IsFeatureAbsent`](internal/mikrotik/collectors_extra.go#sym:fn:IsFeatureAbsent)
+   and skips the collector quietly (no warning, no error metric, the router
+   still counts as reached). Just return the error normally. Only add an
+   in-collector `IsFeatureAbsent` check if you probe several alternative paths
+   and want to try the next one (as `wirelessCollector` does).
 
 4. Add unit tests with the in-package `fakeRunner`, and an e2e assertion in
    `test/e2e/extra_collectors_test.go` (at minimum: the collector must not

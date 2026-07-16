@@ -194,6 +194,17 @@ func (a *Agent) scrapeMetrics(ctx context.Context, t *target) []model.Sample {
 	for _, coll := range t.collectors {
 		samples, err := coll.Collect(ctx, t.client)
 		if err != nil {
+			// A command the board simply does not have (e.g. `health` on a
+			// device with no sensors, wireless on a wired router) is not a
+			// failure: the router answered, it just lacks that feature. Skip it
+			// quietly so it does not spam a warning and an error metric every
+			// scrape. The router WAS reached.
+			if mikrotik.IsFeatureAbsent(err) {
+				routerReached = true
+				a.logger.Debug("collector skipped (feature absent)",
+					"target", t.name, "collector", coll.Name())
+				continue
+			}
 			a.logger.Warn("collector failed",
 				"target", t.name, "collector", coll.Name(), "error", err)
 			t.self.recordCollectorError(coll.Name())
