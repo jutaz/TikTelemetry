@@ -159,14 +159,12 @@ the tag for a released or `go install`ed build, or a `dev-<revision>` string for
 a local build. The release workflow also stamps the tag in explicitly via
 `-ldflags -X main.version`.
 
-Releases are driven by **GitHub Releases**. To cut one:
-
-1. Update `CHANGELOG.md` (move the `Unreleased` entries under the new version)
-   and merge it.
-2. Publish a GitHub Release for the new tag — in the UI (**Releases → Draft a
-   new release → choose a tag `vX.Y.Z` → Generate release notes → Publish**),
-   or with `gh release create vX.Y.Z --generate-notes`. Creating the Release
-   creates the git tag.
+Releases are driven by **GitHub Releases**, and the release notes are the
+auto-generated ones — there is no `CHANGELOG.md`. To cut one, publish a GitHub
+Release for the new tag: in the UI (**Releases → Draft a new release → choose a
+tag `vX.Y.Z` → Generate release notes → Publish**), or with
+`gh release create vX.Y.Z --generate-notes`. Creating the Release creates the
+git tag.
 
 Publishing the Release fires the **Release** workflow, which builds and pushes
 the multi-arch image to GHCR (tagging `latest` for non-prereleases) and attaches
