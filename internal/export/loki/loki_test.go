@@ -34,7 +34,7 @@ func TestBuildPayload(t *testing.T) {
 		},
 	}
 
-	body, err := buildPayload(entries, "test-service", "test-instance")
+	body, err := buildPayload(entries, "test-service")
 	if err != nil {
 		t.Fatalf("buildPayload returned error: %v", err)
 	}
@@ -71,9 +71,9 @@ func TestBuildPayload(t *testing.T) {
 				t.Errorf("stream %q: expected source=mikrotik, got %q",
 					level, s.Stream["source"])
 			}
-			if s.Stream["instance"] != "test-instance" {
-				t.Errorf("stream %q: expected instance=test-instance, got %q",
-					level, s.Stream["instance"])
+			if _, ok := s.Stream["target"]; ok {
+				t.Errorf("stream %q: should not have target label when Target is empty, got target=%q",
+					level, s.Stream["target"])
 			}
 		}
 	})
@@ -200,7 +200,7 @@ func TestBuildPayload(t *testing.T) {
 			{Time: t2, Topics: []string{"info"}, Message: "second"},
 		}
 
-		body, err := buildPayload(multi, "svc", "inst")
+		body, err := buildPayload(multi, "svc")
 		if err != nil {
 			t.Fatalf("buildPayload: %v", err)
 		}
@@ -230,8 +230,130 @@ func TestBuildPayload(t *testing.T) {
 	})
 }
 
+func TestBuildPayloadMultiTarget(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+
+	entries := []model.LogEntry{
+		{Time: now, Topics: []string{"info"}, Message: "core-info-1", Target: "core"},
+		{Time: now, Topics: []string{"error"}, Message: "core-error-1", Target: "core"},
+		{Time: now, Topics: []string{"info"}, Message: "edge-info-1", Target: "edge"},
+		{Time: now.Add(-1 * time.Minute), Topics: []string{"info"}, Message: "core-info-2", Target: "core"},
+	}
+
+	body, err := buildPayload(entries, "test-service")
+	if err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+
+	var pr pushRequest
+	if err := json.Unmarshal(body, &pr); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	// Expected 3 streams sorted by (target, level):
+	//   (core, error), (core, info), (edge, info)
+	if len(pr.Streams) != 3 {
+		t.Fatalf("expected 3 streams, got %d", len(pr.Streams))
+	}
+
+	// Common labels for all streams.
+	for i, s := range pr.Streams {
+		if s.Stream["service"] != "test-service" {
+			t.Errorf("stream %d: service = %q", i, s.Stream["service"])
+		}
+		if s.Stream["source"] != "mikrotik" {
+			t.Errorf("stream %d: source = %q", i, s.Stream["source"])
+		}
+	}
+
+	// Stream 0: core + error.
+	s0 := pr.Streams[0]
+	if s0.Stream["target"] != "core" || s0.Stream["level"] != "error" {
+		t.Errorf("stream 0: labels = %v", s0.Stream)
+	}
+	if len(s0.Values) != 1 {
+		t.Fatalf("stream 0: expected 1 value, got %d", len(s0.Values))
+	}
+	if s0.Values[0][1] != "core-error-1" {
+		t.Errorf("stream 0: message = %v", s0.Values[0][1])
+	}
+
+	// Stream 1: core + info (2 entries, sorted ascending by time).
+	s1 := pr.Streams[1]
+	if s1.Stream["target"] != "core" || s1.Stream["level"] != "info" {
+		t.Errorf("stream 1: labels = %v", s1.Stream)
+	}
+	if len(s1.Values) != 2 {
+		t.Fatalf("stream 1: expected 2 values, got %d", len(s1.Values))
+	}
+	// core-info-2 (earlier) then core-info-1 (later).
+	if s1.Values[0][1] != "core-info-2" {
+		t.Errorf("stream 1[0]: message = %v", s1.Values[0][1])
+	}
+	if s1.Values[1][1] != "core-info-1" {
+		t.Errorf("stream 1[1]: message = %v", s1.Values[1][1])
+	}
+
+	// Stream 2: edge + info.
+	s2 := pr.Streams[2]
+	if s2.Stream["target"] != "edge" || s2.Stream["level"] != "info" {
+		t.Errorf("stream 2: labels = %v", s2.Stream)
+	}
+	if len(s2.Values) != 1 {
+		t.Fatalf("stream 2: expected 1 value, got %d", len(s2.Values))
+	}
+	if s2.Values[0][1] != "edge-info-1" {
+		t.Errorf("stream 2: message = %v", s2.Values[0][1])
+	}
+}
+
+func TestBuildPayloadTargetLabel(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+
+	entries := []model.LogEntry{
+		{Time: now, Topics: []string{"info"}, Message: "has-target", Target: "r1"},
+		{Time: now, Topics: []string{"info"}, Message: "no-target", Target: ""},
+	}
+
+	body, err := buildPayload(entries, "svc")
+	if err != nil {
+		t.Fatalf("buildPayload: %v", err)
+	}
+
+	var pr pushRequest
+	if err := json.Unmarshal(body, &pr); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+
+	// 2 streams sorted by (target, level): ("", info) then (r1, info).
+	if len(pr.Streams) != 2 {
+		t.Fatalf("expected 2 streams, got %d", len(pr.Streams))
+	}
+
+	// Stream 0: target="", level=info → no target label.
+	s0 := pr.Streams[0]
+	if s0.Stream["level"] != "info" {
+		t.Errorf("stream 0: level = %q", s0.Stream["level"])
+	}
+	if _, hasTarget := s0.Stream["target"]; hasTarget {
+		t.Errorf("stream 0: should not have target label, got %v", s0.Stream)
+	}
+	if len(s0.Values) != 1 || s0.Values[0][1] != "no-target" {
+		t.Errorf("stream 0: expected message 'no-target'")
+	}
+
+	// Stream 1: target="r1", level=info → has target label.
+	s1 := pr.Streams[1]
+	if s1.Stream["level"] != "info" || s1.Stream["target"] != "r1" {
+		t.Errorf("stream 1: expected level=info, target=r1, got %v", s1.Stream)
+	}
+	if len(s1.Values) != 1 || s1.Values[0][1] != "has-target" {
+		t.Errorf("stream 1: expected message 'has-target'")
+	}
+}
+
 func TestBuildPayloadEmpty(t *testing.T) {
-	body, err := buildPayload(nil, "svc", "inst")
+	body, err := buildPayload(nil, "svc")
 	if err != nil {
 		t.Fatalf("buildPayload returned error for empty input: %v", err)
 	}

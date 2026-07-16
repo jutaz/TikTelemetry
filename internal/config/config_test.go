@@ -13,17 +13,26 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatalf("Load() error: %v", err)
 	}
 
-	if cfg.Router.Address != "192.168.88.1:8728" {
-		t.Errorf("default router address = %q", cfg.Router.Address)
+	if len(cfg.Routers) != 1 {
+		t.Fatalf("expected 1 router, got %d", len(cfg.Routers))
+	}
+	if cfg.Routers[0].Address != "192.168.88.1:8728" {
+		t.Errorf("default router address = %q", cfg.Routers[0].Address)
+	}
+	if cfg.Routers[0].Username != "admin" {
+		t.Errorf("default router username = %q, want admin", cfg.Routers[0].Username)
+	}
+	if cfg.Routers[0].Name != cfg.Routers[0].Address {
+		t.Errorf("default router name = %q, want address %q", cfg.Routers[0].Name, cfg.Routers[0].Address)
+	}
+	if cfg.ScrapeConcurrency != 4 {
+		t.Errorf("default ScrapeConcurrency = %d, want 4", cfg.ScrapeConcurrency)
 	}
 	if cfg.PollInterval != 15*time.Second {
 		t.Errorf("default poll interval = %s", cfg.PollInterval)
 	}
 	if len(cfg.Exporters) != 1 || cfg.Exporters[0] != "otlp" {
 		t.Errorf("default exporters = %v, want [otlp]", cfg.Exporters)
-	}
-	if cfg.InstanceID != cfg.Router.Address {
-		t.Errorf("InstanceID should default to router address, got %q", cfg.InstanceID)
 	}
 }
 

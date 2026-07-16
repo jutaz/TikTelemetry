@@ -468,8 +468,8 @@ func TestPrometheusConsumeMetricsFull(t *testing.T) {
 	if m0["service"] == "" {
 		t.Error("series 0 missing service label")
 	}
-	if m0["instance"] == "" {
-		t.Error("series 0 missing instance label")
+	if _, ok := m0["instance"]; ok {
+		t.Error("series 0 should not carry an instance label (per-router identity is the 'target' attribute)")
 	}
 	if len(series[0].Samples) != 1 {
 		t.Fatalf("series 0: expected 1 sample, got %d", len(series[0].Samples))
@@ -481,7 +481,7 @@ func TestPrometheusConsumeMetricsFull(t *testing.T) {
 		t.Errorf("series 0 timestamp should be positive, got %d", series[0].Samples[0].TimestampMs)
 	}
 
-	// --- Second series: mikrotik.interface.rx.bytes (attrs + service + instance) ---
+	// --- Second series: mikrotik.interface.rx.bytes (attrs + service) ---
 	m1 := labelMap(series[1])
 	if m1["__name__"] != "mikrotik_interface_rx_bytes" {
 		t.Errorf("series 1 __name__ = %q", m1["__name__"])
@@ -492,8 +492,8 @@ func TestPrometheusConsumeMetricsFull(t *testing.T) {
 	if m1["service"] == "" {
 		t.Error("series 1 missing service label")
 	}
-	if m1["instance"] == "" {
-		t.Error("series 1 missing instance label")
+	if _, ok := m1["instance"]; ok {
+		t.Error("series 1 should not carry an instance label")
 	}
 	if len(series[1].Samples) != 1 {
 		t.Fatalf("series 1: expected 1 sample, got %d", len(series[1].Samples))

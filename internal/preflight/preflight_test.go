@@ -160,9 +160,9 @@ func TestRunReportsRouterAndEndpoints(t *testing.T) {
 	if report.OK() {
 		t.Error("expected overall failure (router unreachable)")
 	}
-	// router-api must be first and failing; exporter must pass.
-	if report.Results[0].Name != "router-api" || report.Results[0].OK {
-		t.Errorf("first result = %+v, want failing router-api", report.Results[0])
+	// The router check must be first and failing; exporter must pass.
+	if !strings.HasPrefix(report.Results[0].Name, "router:") || report.Results[0].OK {
+		t.Errorf("first result = %+v, want a failing router: check", report.Results[0])
 	}
 	if !strings.HasPrefix(report.Results[1].Name, "exporter:") || !report.Results[1].OK {
 		t.Errorf("second result = %+v, want passing exporter", report.Results[1])

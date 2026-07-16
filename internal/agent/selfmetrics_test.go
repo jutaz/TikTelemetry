@@ -147,12 +147,13 @@ func (c *capturingSink) ConsumeMetrics(_ context.Context, s []model.Sample) erro
 func (c *capturingSink) ConsumeLogs(context.Context, []model.LogEntry) error { return nil }
 func (c *capturingSink) Shutdown(context.Context) error                      { return nil }
 
-// TestAgent_EmitsSelfMetricsWhenRouterUnreachable runs a single scrape against
-// an unreachable router and verifies the agent still pushes its self-metrics
-// (with router.up=0), proving observability survives a router outage.
+// TestAgent_EmitsSelfMetricsWhenRouterUnreachable runs a single scrape cycle
+// against an unreachable router and verifies the agent still pushes its
+// self-metrics (with router.up=0, stamped with the target label), proving
+// observability survives a router outage.
 func TestAgent_EmitsSelfMetricsWhenRouterUnreachable(t *testing.T) {
 	t.Setenv("ROUTER_PASS", "secret")
-	t.Setenv("ROUTER_ADDRESS", "127.0.0.1:1") // refuses connections
+	t.Setenv("ROUTERS", "deadrouter@127.0.0.1:1") // refuses connections
 	t.Setenv("ROUTER_DIAL_TIMEOUT", "100ms")
 
 	cfg, err := config.Load()
@@ -165,30 +166,78 @@ func TestAgent_EmitsSelfMetricsWhenRouterUnreachable(t *testing.T) {
 	a := New(cfg, quietLogger(), multi)
 
 	// One scrape cycle against the dead router.
-	a.scrapeMetrics(context.Background())
+	a.scrapeAll(context.Background())
 
 	if len(sink.metrics) != 1 {
 		t.Fatalf("sink received %d metric batches, want 1", len(sink.metrics))
 	}
 	batch := sink.metrics[0]
 
-	// Self-metrics must be present even though every collector failed.
-	up := findSelf(batch, "tiktelemetry.router.up", nil)
+	targetAttr := map[string]string{"target": "deadrouter"}
+
+	// Self-metrics must be present (stamped with the target) even though every
+	// collector failed.
+	up := findSelf(batch, "tiktelemetry.router.up", targetAttr)
 	if up == nil {
-		t.Fatal("missing tiktelemetry.router.up in the batch")
+		t.Fatal("missing tiktelemetry.router.up{target=deadrouter} in the batch")
 	}
 	if up.Value != 0 {
 		t.Errorf("router.up = %d, want 0 (router unreachable)", up.Value)
 	}
 
 	// At least one collector error should be recorded (all collectors failed to
-	// dial), surfaced as a per-collector counter.
-	if findSelf(batch, "tiktelemetry.collector.errors", nil) == nil {
-		t.Error("expected at least one tiktelemetry.collector.errors series after a failed scrape")
+	// dial), surfaced as a per-collector counter carrying the target label.
+	if findSelf(batch, "tiktelemetry.collector.errors", targetAttr) == nil {
+		t.Error("expected at least one tiktelemetry.collector.errors{target=deadrouter} series")
 	}
 
 	// scrapes.total should be 1 after one scrape.
-	if s := findSelf(batch, "tiktelemetry.scrapes.total", nil); s == nil || s.Value != 1 {
+	if s := findSelf(batch, "tiktelemetry.scrapes.total", targetAttr); s == nil || s.Value != 1 {
 		t.Errorf("scrapes.total = %+v, want 1", s)
+	}
+}
+
+// TestAgent_MultiRouterParallelScrape verifies the hub scrapes multiple routers,
+// stamps each with its own target label, and that one dead router does not stop
+// the others from producing self-metrics.
+func TestAgent_MultiRouterParallelScrape(t *testing.T) {
+	t.Setenv("ROUTER_PASS", "secret")
+	t.Setenv("ROUTERS", "a@127.0.0.1:1,b@127.0.0.1:1,c@127.0.0.1:1")
+	t.Setenv("ROUTER_DIAL_TIMEOUT", "100ms")
+	t.Setenv("ROUTER_SCRAPE_CONCURRENCY", "2")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	sink := &capturingSink{cap: export.Capabilities{Metrics: true}}
+	multi := export.NewMultiSink(quietLogger(), sink)
+	a := New(cfg, quietLogger(), multi)
+
+	a.scrapeAll(context.Background())
+
+	if len(sink.metrics) != 1 {
+		t.Fatalf("sink received %d metric batches, want 1 merged batch", len(sink.metrics))
+	}
+	batch := sink.metrics[0]
+
+	// Every router must contribute a router.up series with its own target label.
+	for _, name := range []string{"a", "b", "c"} {
+		s := findSelf(batch, "tiktelemetry.router.up", map[string]string{"target": name})
+		if s == nil {
+			t.Errorf("missing tiktelemetry.router.up{target=%s}", name)
+			continue
+		}
+		if s.Value != 0 {
+			t.Errorf("router.up{target=%s} = %d, want 0 (all unreachable)", name, s.Value)
+		}
+	}
+
+	// Every sample in the merged batch must carry a target label.
+	for _, s := range batch {
+		if s.Attributes["target"] == "" {
+			t.Errorf("sample %q missing target label", s.Name)
+		}
 	}
 }

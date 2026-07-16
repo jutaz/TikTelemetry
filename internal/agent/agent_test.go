@@ -45,17 +45,21 @@ func TestAgent_CollectorSelection(t *testing.T) {
 		&fakeSink{name: "s", cap: export.Capabilities{Metrics: true, Logs: true}})
 	a := New(cfg, quietLogger(), multi)
 
-	if len(a.collectors) != 2 {
-		t.Errorf("selected %d collectors, want 2", len(a.collectors))
+	if len(a.targets) != 1 {
+		t.Fatalf("got %d targets, want 1", len(a.targets))
+	}
+	tgt := a.targets[0]
+	if len(tgt.collectors) != 2 {
+		t.Errorf("selected %d collectors, want 2", len(tgt.collectors))
 	}
 	names := map[string]bool{}
-	for _, c := range a.collectors {
+	for _, c := range tgt.collectors {
 		names[c.Name()] = true
 	}
 	if !names["system"] || !names["interface"] {
 		t.Errorf("expected system and interface collectors, got %v", names)
 	}
-	if a.logColl == nil {
+	if tgt.logColl == nil {
 		t.Error("expected a log collector when a logs-capable sink is present")
 	}
 }
@@ -80,11 +84,12 @@ func TestAgent_NoLogCollectorWithoutLogSink(t *testing.T) {
 	if a.wantLogs {
 		t.Error("wantLogs should be false")
 	}
-	if a.logColl != nil {
+	tgt := a.targets[0]
+	if tgt.logColl != nil {
 		t.Error("log collector should be nil when no sink consumes logs")
 	}
 	// With no COLLECTORS restriction, all default collectors run.
-	if len(a.collectors) == 0 {
+	if len(tgt.collectors) == 0 {
 		t.Error("expected default collectors")
 	}
 }

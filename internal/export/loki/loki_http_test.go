@@ -219,18 +219,21 @@ func TestLokiConsumeLogsFull(t *testing.T) {
 			Topics:  []string{"error", "dhcp"},
 			Message: "dhcp lease failed",
 			ID:      "e1",
+			Target:  "router1",
 		},
 		{
 			Time:    earlier,
 			Topics:  []string{"info", "system"},
 			Message: "system info message",
 			ID:      "i1",
+			Target:  "router1",
 		},
 		{
 			Time:    now,
 			Topics:  []string{"warning", "wireless"},
 			Message: "signal low",
 			ID:      "",
+			Target:  "router1",
 		},
 	}
 
@@ -299,11 +302,14 @@ func TestLokiConsumeLogsFull(t *testing.T) {
 		if s.Stream["source"] != "mikrotik" {
 			t.Errorf("stream %q: source = %q, want mikrotik", level, s.Stream["source"])
 		}
-		if s.Stream["instance"] == "" {
-			t.Errorf("stream %q: missing instance label", level)
+		if s.Stream["target"] != "router1" {
+			t.Errorf("stream %q: target = %q, want router1", level, s.Stream["target"])
 		}
 		if s.Stream["level"] != level {
 			t.Errorf("stream %q: level label = %q", level, s.Stream["level"])
+		}
+		if _, ok := s.Stream["instance"]; ok {
+			t.Errorf("stream %q: should not have instance label", level)
 		}
 	}
 
