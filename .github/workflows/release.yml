@@ -73,7 +73,7 @@ jobs:
 
       - name: Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           # Do not tag `latest` for pre-releases (v0.1.0-rc1 etc.).
