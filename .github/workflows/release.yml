@@ -1,70 +1,52 @@
 name: Release
 
-# Two ways to cut a release, both landing in the same build/publish path:
+# Driven by GitHub Releases. Publishing a Release (in the UI, or with
+# `gh release create vX.Y.Z --generate-notes`) creates the git tag AND fires
+# this workflow, which builds and pushes the multi-arch image to GHCR and
+# attaches the per-architecture offline tarballs to that same Release.
 #
-#   1. Push a git tag:   git tag v0.1.0 && git push origin v0.1.0
-#      (the idiomatic Go way — the tag IS the version; go install / the module
-#      proxy read it directly)
-#   2. Run this workflow from the Actions UI with a `version` input, and it
-#      creates the tag + GitHub Release for you.
+# The git tag is the version — Go reads it natively (go install / the module
+# proxy), and the binary reports it via runtime/debug build info. We stamp it
+# into the image build too via the VERSION build-arg.
 #
-# In both cases the image + offline tarballs are built and published in this
-# same run. We deliberately do the build here rather than relying on the tag
-# push to re-trigger, because GitHub does not fire workflows for tags/releases
-# created by GITHUB_TOKEN (the workflow_dispatch path would otherwise stall).
+# workflow_dispatch is a manual fallback to (re)build the artifacts for an
+# existing Release, e.g. if a build failed and you want to retry without
+# recreating the Release.
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to release, e.g. v0.1.0 (a git tag + Release are created)"
+      tag:
+        description: "Existing release tag to (re)build, e.g. v0.1.0"
         required: true
         type: string
 
 permissions:
-  contents: write # create the tag + release and attach assets
+  contents: write # attach assets to the Release
   packages: write # push to GHCR
 
 jobs:
-  # Resolve the tag to publish. On a tag push it's the pushed ref; on a manual
-  # dispatch it creates the tag + release, then hands the tag to the build jobs.
+  # Resolve the release tag from whichever event fired, and check out that tag
+  # so the build matches the released commit exactly.
   prepare:
     name: Resolve release tag
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-
       - id: tag
         name: Determine tag
         env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            tag="$INPUT_VERSION"
-            case "$tag" in
-              v*) ;;
-              *) echo "::error::version must start with 'v' (got '$tag')"; exit 1 ;;
-            esac
-            # Create the tag + release if it doesn't already exist (idempotent).
-            if gh release view "$tag" >/dev/null 2>&1; then
-              echo "Release $tag already exists; publishing to it." >> "$GITHUB_STEP_SUMMARY"
-            else
-              gh release create "$tag" \
-                --title "$tag" \
-                --generate-notes \
-                --target "$GITHUB_SHA"
-              echo "Created release $tag." >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            tag="${GITHUB_REF_NAME}"
-          fi
+          tag="${RELEASE_TAG:-$INPUT_TAG}"
+          case "$tag" in
+            v*) ;;
+            *) echo "::error::release tag must start with 'v' (got '$tag')"; exit 1 ;;
+          esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   image:
@@ -73,6 +55,8 @@ jobs:
     needs: prepare
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -92,10 +76,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # Do not tag `latest` for pre-releases (v0.1.0-rc1 etc.).
           tags: |
             type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
             type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
       - name: Build and push (multi-arch)
         uses: docker/build-push-action@v6
@@ -125,6 +110,8 @@ jobs:
             platform: linux/amd64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

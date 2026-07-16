@@ -159,12 +159,17 @@ the tag for a released or `go install`ed build, or a `dev-<revision>` string for
 a local build. The release workflow also stamps the tag in explicitly via
 `-ldflags -X main.version`.
 
-To cut a release, either:
+Releases are driven by **GitHub Releases**. To cut one:
 
-1. Push a tag — `git tag v0.1.0 && git push origin v0.1.0`, or
-2. Run the **Release** workflow from the Actions tab with a `version` input
-   (it creates the tag + GitHub Release for you).
+1. Update `CHANGELOG.md` (move the `Unreleased` entries under the new version)
+   and merge it.
+2. Publish a GitHub Release for the new tag — in the UI (**Releases → Draft a
+   new release → choose a tag `vX.Y.Z` → Generate release notes → Publish**),
+   or with `gh release create vX.Y.Z --generate-notes`. Creating the Release
+   creates the git tag.
 
-Either path builds and pushes the multi-arch image to GHCR and attaches the
-per-arch offline tarballs to the release. Update `CHANGELOG.md` (move the
-`Unreleased` entries under the new version) as part of the release PR.
+Publishing the Release fires the **Release** workflow, which builds and pushes
+the multi-arch image to GHCR (tagging `latest` for non-prereleases) and attaches
+the per-architecture offline tarballs to that same Release. A manual
+`workflow_dispatch` on the Release workflow can re-build the artifacts for an
+existing tag if a build needs retrying.
