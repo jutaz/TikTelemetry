@@ -22,8 +22,10 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,19 +100,36 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 
 	log.Printf("starting RouterOS container from %s (this can take a minute)", routerImage)
 
-	// The image only enables QEMU host port forwarding (so the API is reachable
-	// from the host) when a second interface (eth1) is present. Attach the
-	// container to the default bridge (eth0 + host port mapping) AND a dedicated
-	// network (eth1) to trigger that path.
-	net, err := tcnetwork.New(ctx)
+	// The image's entrypoint only enables QEMU host-port forwarding (SLIRP
+	// `-nic user,hostfwd=...`, which is what makes the API reachable through
+	// Docker's published port) when a *second* interface `eth1` exists inside
+	// the container at boot. See /routeros_source/entrypoint.sh: it runs
+	// `ip link show eth1` once and sets USE_HOSTFWD=1 only if eth1 is present.
+	//
+	// We therefore attach the container to TWO dedicated networks. The first
+	// becomes eth0 (and carries Docker's published port), the second becomes
+	// eth1 (and triggers the hostfwd path). We deliberately do NOT use the
+	// default `bridge` network by name: on some Docker daemons (notably GitHub
+	// runners) the create-time vs connect-time interface ordering of
+	// `["bridge", custom]` is non-deterministic, so eth1 sometimes does not
+	// exist when the entrypoint probes for it — the API port then never
+	// forwards and the login handshake is dropped (EOF / reset after TCP
+	// connect). Two explicit custom networks make eth1's presence
+	// deterministic across daemons.
+	netA, err := tcnetwork.New(ctx)
 	if err != nil {
-		return router{}, nil, fmt.Errorf("create routeros network: %w", err)
+		return router{}, nil, fmt.Errorf("create routeros network A: %w", err)
+	}
+	netB, err := tcnetwork.New(ctx)
+	if err != nil {
+		_ = netA.Remove(ctx)
+		return router{}, nil, fmt.Errorf("create routeros network B: %w", err)
 	}
 
 	req := testcontainers.ContainerRequest{
 		Image:        routerImage,
 		ExposedPorts: []string{"8728/tcp"},
-		Networks:     []string{"bridge", net.Name},
+		Networks:     []string{netA.Name, netB.Name},
 		HostConfigModifier: func(hc *container.HostConfig) {
 			hc.CapAdd = append(hc.CapAdd, "NET_ADMIN")
 			hc.Devices = append(hc.Devices, container.DeviceMapping{
@@ -129,7 +148,8 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 		Started:          true,
 	})
 	if err != nil {
-		_ = net.Remove(ctx)
+		_ = netA.Remove(ctx)
+		_ = netB.Remove(ctx)
 		return router{}, nil, fmt.Errorf("start RouterOS container: %w", err)
 	}
 
@@ -139,8 +159,11 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 		if err := ctr.Terminate(cctx); err != nil {
 			log.Printf("terminate RouterOS container: %v", err)
 		}
-		if err := net.Remove(cctx); err != nil {
-			log.Printf("remove routeros network: %v", err)
+		if err := netA.Remove(cctx); err != nil {
+			log.Printf("remove routeros network A: %v", err)
+		}
+		if err := netB.Remove(cctx); err != nil {
+			log.Printf("remove routeros network B: %v", err)
 		}
 	}
 
@@ -157,10 +180,35 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 
 	r := router{addr: host + ":" + port.Port(), user: routerUser, pass: routerPass}
 	if err := waitForAPI(ctx, r); err != nil {
+		dumpContainerDiagnostics(ctx, ctr)
 		cleanup()
 		return router{}, nil, err
 	}
 	return r, cleanup, nil
+}
+
+// dumpContainerDiagnostics logs the container's network interfaces and recent
+// stdout when the API never became ready. This distinguishes the two failure
+// modes we care about: a missing `eth1` (so the entrypoint never enabled
+// hostfwd — look for "KVM not available"/no hostfwd) versus a genuinely slow
+// CHR boot. Best-effort: any error here is itself logged and ignored.
+func dumpContainerDiagnostics(ctx context.Context, ctr testcontainers.Container) {
+	if code, reader, err := ctr.Exec(ctx, []string{"ip", "-o", "link", "show"}); err == nil {
+		buf := new(strings.Builder)
+		_, _ = io.Copy(buf, reader)
+		log.Printf("e2e diag: container interfaces (exit %d):\n%s", code, buf.String())
+	} else {
+		log.Printf("e2e diag: could not list container interfaces: %v", err)
+	}
+
+	if reader, err := ctr.Logs(ctx); err == nil {
+		defer func() { _ = reader.Close() }()
+		buf := new(strings.Builder)
+		_, _ = io.Copy(buf, reader)
+		log.Printf("e2e diag: container logs:\n%s", buf.String())
+	} else {
+		log.Printf("e2e diag: could not read container logs: %v", err)
+	}
 }
 
 // waitForAPI blocks until a RouterOS API login succeeds or the deadline passes.
