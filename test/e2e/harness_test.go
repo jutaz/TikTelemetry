@@ -45,9 +45,15 @@ const (
 	routerPass = "" // CHR default: admin with a blank password.
 
 	// apiReadyTimeout bounds how long we wait for the RouterOS API to accept a
-	// login after the container starts. CHR boots in ~30-60s under TCG
-	// emulation, faster with KVM.
-	apiReadyTimeout = 5 * time.Minute
+	// login for a single container attempt. With KVM the CHR is up in ~30-60s;
+	// occasionally a boot stalls, in which case a fresh container (see
+	// bootAttempts) recovers far more reliably than waiting longer.
+	apiReadyTimeout = 3 * time.Minute
+
+	// bootAttempts is how many times we recreate the container if the API never
+	// becomes ready. A stalled CHR boot does not self-heal, so a fresh QEMU is
+	// the reliable recovery. Total worst case: bootAttempts * apiReadyTimeout.
+	bootAttempts = 3
 )
 
 // router describes a reachable RouterOS API endpoint for the tests.
@@ -63,7 +69,8 @@ var sharedRouter router
 // TestMain provisions a single RouterOS endpoint (external or containerised),
 // waits for the API to be ready, runs the suite, and cleans up.
 func TestMain(m *testing.M) {
-	ctx, cancel := context.WithTimeout(context.Background(), apiReadyTimeout+2*time.Minute)
+	// Budget for all boot attempts plus overhead (image pull, teardown).
+	ctx, cancel := context.WithTimeout(context.Background(), bootAttempts*apiReadyTimeout+3*time.Minute)
 	defer cancel()
 
 	r, cleanup, err := provisionRouter(ctx)
@@ -125,11 +132,54 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 		_ = netA.Remove(ctx)
 		return router{}, nil, fmt.Errorf("create routeros network B: %w", err)
 	}
+	removeNets := func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := netA.Remove(cctx); err != nil {
+			log.Printf("remove routeros network A: %v", err)
+		}
+		if err := netB.Remove(cctx); err != nil {
+			log.Printf("remove routeros network B: %v", err)
+		}
+	}
 
+	// A CHR boot occasionally stalls even with KVM. Recreating the container is
+	// far more reliable than waiting longer, so try a fresh QEMU up to
+	// bootAttempts times before giving up.
+	var lastErr error
+	for attempt := 1; attempt <= bootAttempts; attempt++ {
+		if ctx.Err() != nil {
+			removeNets()
+			return router{}, nil, fmt.Errorf("context cancelled before RouterOS was ready: %w", ctx.Err())
+		}
+		log.Printf("RouterOS container boot attempt %d/%d", attempt, bootAttempts)
+
+		r, stop, err := bootRouterContainer(ctx, netA.Name, netB.Name)
+		if err == nil {
+			cleanup := func() {
+				stop()
+				removeNets()
+			}
+			return r, cleanup, nil
+		}
+		lastErr = err
+		log.Printf("boot attempt %d/%d failed: %v", attempt, bootAttempts, err)
+	}
+
+	removeNets()
+	return router{}, nil, fmt.Errorf("RouterOS never became ready after %d attempts: %w", bootAttempts, lastErr)
+}
+
+// bootRouterContainer starts one CHR container on the given networks and waits
+// for its API to accept a login. On any failure it dumps diagnostics, tears the
+// container down, and returns an error so the caller can retry with a fresh one.
+// The returned stop function terminates the container (networks are the
+// caller's responsibility so they can be reused across attempts).
+func bootRouterContainer(ctx context.Context, netAName, netBName string) (router, func(), error) {
 	req := testcontainers.ContainerRequest{
 		Image:        routerImage,
 		ExposedPorts: []string{"8728/tcp"},
-		Networks:     []string{netA.Name, netB.Name},
+		Networks:     []string{netAName, netBName},
 		HostConfigModifier: func(hc *container.HostConfig) {
 			hc.CapAdd = append(hc.CapAdd, "NET_ADMIN")
 			hc.Devices = append(hc.Devices, container.DeviceMapping{
@@ -162,43 +212,35 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 		Started:          true,
 	})
 	if err != nil {
-		_ = netA.Remove(ctx)
-		_ = netB.Remove(ctx)
 		return router{}, nil, fmt.Errorf("start RouterOS container: %w", err)
 	}
 
-	cleanup := func() {
+	stop := func() {
 		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := ctr.Terminate(cctx); err != nil {
 			log.Printf("terminate RouterOS container: %v", err)
 		}
-		if err := netA.Remove(cctx); err != nil {
-			log.Printf("remove routeros network A: %v", err)
-		}
-		if err := netB.Remove(cctx); err != nil {
-			log.Printf("remove routeros network B: %v", err)
-		}
 	}
 
 	host, err := ctr.Host(ctx)
 	if err != nil {
-		cleanup()
+		stop()
 		return router{}, nil, fmt.Errorf("container host: %w", err)
 	}
 	port, err := ctr.MappedPort(ctx, "8728/tcp")
 	if err != nil {
-		cleanup()
+		stop()
 		return router{}, nil, fmt.Errorf("container mapped port: %w", err)
 	}
 
 	r := router{addr: host + ":" + port.Port(), user: routerUser, pass: routerPass}
 	if err := waitForAPI(ctx, r); err != nil {
 		dumpContainerDiagnostics(ctx, ctr)
-		cleanup()
+		stop()
 		return router{}, nil, err
 	}
-	return r, cleanup, nil
+	return r, stop, nil
 }
 
 // dumpContainerDiagnostics logs the container's network interfaces and recent
