@@ -180,6 +180,15 @@ func bootRouterContainer(ctx context.Context, netAName, netBName string) (router
 		Image:        routerImage,
 		ExposedPorts: []string{"8728/tcp"},
 		Networks:     []string{netAName, netBName},
+		// The image's entrypoint hardcodes `-smp 4,sockets=1,cores=4,threads=1`
+		// but passes the container command through to QEMU as trailing args
+		// (`run_qemu "$@"`), and QEMU uses the LAST `-smp` given. GitHub's
+		// standard runners have only 2 vCPUs; requesting 4 vCPUs on a 2-vCPU KVM
+		// host consistently stalls the CHR guest at the boot banner (the API
+		// service never comes up — login is reset). Override with a full,
+		// self-consistent 2-vCPU topology so the product still matches maxcpus
+		// (a bare `-smp 2` is rejected because the earlier cores=4 lingers).
+		Cmd: []string{"-smp", "2,sockets=1,cores=2,threads=1"},
 		HostConfigModifier: func(hc *container.HostConfig) {
 			hc.CapAdd = append(hc.CapAdd, "NET_ADMIN")
 			hc.Devices = append(hc.Devices, container.DeviceMapping{
