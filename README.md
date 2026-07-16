@@ -90,14 +90,6 @@ You can combine exporters freely, e.g. `EXPORTERS=otlp,loki` pushes to an OTLP b
 
 ## Quick start
 
-> **Pre-release note.** A pre-built image is not published to a registry yet, so `ghcr.io/jutaz/tiktelemetry:latest` below will not pull. Until the first release, build the image locally first:
->
-> ```bash
-> docker build -t tiktelemetry:local .
-> ```
->
-> Then use `tiktelemetry:local` in place of `ghcr.io/jutaz/tiktelemetry:latest` in the commands below (the `docker-compose.example.yml` already has a commented `build: .` line you can uncomment instead).
-
 ### 1. Create a RouterOS API user
 
 Get [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) onto the router (drag it into **Files** in WinBox, or `scp` it), then run:
@@ -543,6 +535,16 @@ TikTelemetry supports two paths into Grafana Cloud. The **native path** (`grafan
 ```bash
 go build -ldflags="-s -w" -o tiktelemetry ./cmd/tiktelemetry
 ```
+
+### Local Docker image (development)
+
+To run the container from your working tree instead of the published image:
+
+```bash
+docker build -t tiktelemetry:dev .
+```
+
+Then substitute `tiktelemetry:dev` for `ghcr.io/jutaz/tiktelemetry:latest` in the run commands, or uncomment the `build: .` line in `docker-compose.example.yml`.
 
 ### Cross-compile for ARM
 
