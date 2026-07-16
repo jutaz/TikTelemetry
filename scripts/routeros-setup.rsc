@@ -11,6 +11,12 @@
 # To run TikTelemetry directly ON the router (RouterOS container feature),
 # run scripts/container-setup.rsc afterwards — see the README
 # "Running on RouterOS" section.
+#
+# ── Multi-router hub deployments ───────────────────────────────────────────
+# In a hub deployment, one TikTelemetry agent monitors many routers. Run
+# this script on EACH router you want to monitor. The same shared credentials
+# can be reused across routers, or you can set per-router overrides in the
+# agent configuration (ROUTER_<NAME>_PASS etc.).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Create a read-only user group for API access

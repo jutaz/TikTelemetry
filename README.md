@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/jutaz/tiktelemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/jutaz/tiktelemetry/actions/workflows/ci.yml)
 
-A lightweight Go agent that pulls metrics and logs from MikroTik RouterOS via its binary API and pushes them directly to one or more telemetry backends — OTLP/HTTP, Prometheus remote_write, Loki, or any combination. Runs on ARM32/ARM64/AMD64 in a ~14 MB static scratch container with <30 MB RSS. No Prometheus, no Alloy, no Promtail middleman.
+A lightweight Go agent that pulls metrics and logs from one or more MikroTik routers via the RouterOS binary API and pushes them directly to one or more telemetry backends — OTLP/HTTP, Prometheus remote_write, Loki, or any combination. Runs as a HUB: one instance scrapes many routers in parallel, stamping each router's telemetry with a `target` label so a single backend distinguishes them. Runs on ARM32/ARM64/AMD64 in a ~14 MB static scratch container with <30 MB RSS. No Prometheus, no Alloy, no Promtail middleman.
 
 ---
 
@@ -52,7 +52,7 @@ flowchart TD
     L --> LK
 ```
 
-The agent runs a continuous scrape loop. On each tick it queries RouterOS `/system/resource/print`, `/interface/print`, and `/log/print` via the binary API. Metrics and logs are collected once, then fanned out to every enabled exporter. The connection to the router is resilient — it reconnects automatically on the next tick after any failure, so a transient router or network outage never tears the agent down.
+The agent runs one or more continuous scrape loops in parallel — one per configured router. On each tick it queries RouterOS `/system/resource/print`, `/interface/print`, and `/log/print` via the binary API. Metrics and logs are collected once, then fanned out to every enabled exporter. The connection to each router is resilient — it reconnects automatically on the next tick after any failure, so a transient router or network outage never tears the agent down.
 
 ---
 
@@ -60,6 +60,7 @@ The agent runs a continuous scrape loop. On each tick it queries RouterOS `/syst
 
 - **Multi-arch static image** — `linux/amd64`, `linux/arm64`, `linux/arm/v7` in a single manifest
 - **Scratch container** — ~14 MB binary, no BusyBox, no Alpine, no CVEs from system packages
+- **Multi-router HUB** — one agent scrapes many routers in parallel; lean routers need nothing installed
 - **Metrics + logs** — both from a single binary
 - **Composable exporters** — enable one or more backends (OTLP, Prometheus, Loki) simultaneously; data is collected once and fanned out
 - **Env-var only config** — no config files, no YAML, no templating
@@ -185,6 +186,76 @@ It reports the router's architecture, so you can confirm you built the right ima
 
 > **Running on the router itself?** See [Running on RouterOS](#running-on-routeros) for the on-device container deployment (no separate server needed).
 
+To monitor several routers from a single agent, replace `ROUTER_ADDRESS` with a `ROUTERS` list and set `ROUTER_SCRAPE_CONCURRENCY` to control parallelism:
+
+```bash
+EXPORTERS=grafanacloud
+ROUTERS=core@192.168.88.1:8728,cap-office@192.168.88.2:8728,cap-lab@192.168.88.3:8728
+ROUTER_USER=tiktelemetry
+ROUTER_PASS="CHANGE_ME"
+ROUTER_SCRAPE_CONCURRENCY=4
+
+# ... rest is the same (exporter vars unchanged)
+PROMETHEUS_ENDPOINT=https://prometheus-prod-42-prod-us-east-0.grafana.net/api/prom/push
+PROMETHEUS_USER=12345
+PROMETHEUS_PASS=glc_xxxxxx
+
+LOKI_ENDPOINT=https://logs-prod-012.grafana.net
+LOKI_USER=67890
+LOKI_PASS=glc_xxxxxx
+```
+
+The `--check` mode probes **every** configured router and reports per-router status. Each router's metrics and logs carry a `target` label matching the name you gave it (e.g. `core`, `cap-office`, `cap-lab`).
+
+---
+
+## Monitoring multiple routers
+
+TikTelemetry is designed as a **HUB**: one lightweight agent monitors many MikroTik routers in parallel. The routers themselves need nothing beyond an API user, the API service enabled, and network reachability — no packages, no scripts, no containers.
+
+### How it scales
+
+Each router runs as an independent scrape loop. `ROUTER_SCRAPE_CONCURRENCY` controls how many are scraped together (default `4`). The agent reconnects per-router on failure — one unreachable router never blocks another.
+
+### Router naming and the `target` label
+
+Every metric and log record from a given router is stamped with a `target` label set to the router's name (the part before `@` in `ROUTERS`). This lets you filter, group, and alert by router in your observability backend.
+
+### Credential management
+
+All routers share `ROUTER_USER`, `ROUTER_PASS`, `ROUTER_TLS`, and `ROUTER_TLS_INSECURE` by default. Override per-router with `ROUTER_<NAME>_<FIELD>` — see [Per-router credential overrides](#per-router-credential-overrides) in the Configuration section.
+
+### Concrete example
+
+```bash
+EXPORTERS=grafanacloud
+ROUTERS=core@192.168.88.1:8728,cap-office@192.168.88.2:8728,cap-lab@192.168.88.3:8728
+ROUTER_USER=tiktelemetry
+ROUTER_PASS=shared-secret
+ROUTER_SCRAPE_CONCURRENCY=4
+
+# Override password for cap-office only:
+ROUTER_CAP_OFFICE_PASS=another-secret
+
+# Exporter vars unchanged ...
+PROMETHEUS_ENDPOINT=https://prometheus-prod-42-prod-us-east-0.grafana.net/api/prom/push
+PROMETHEUS_USER=12345
+PROMETHEUS_PASS=glc_xxxxxx
+LOKI_ENDPOINT=https://logs-prod-012.grafana.net
+LOKI_USER=67890
+LOKI_PASS=glc_xxxxxx
+```
+
+### Deployment recommendation
+
+| Scenario | Where to run TikTelemetry |
+|----------|--------------------------|
+| Single router | On the router itself (RouterOS container) — see [Running on RouterOS](#running-on-routeros) |
+| Two or more routers | Off-router: Raspberry Pi, VM, Docker host — one agent for all |
+| Many routers (10+) | Off-router — adjust `ROUTER_SCRAPE_CONCURRENCY` to match your backend's ingest capacity |
+
+The setup script [`scripts/routeros-setup.rsc`](scripts/routeros-setup.rsc) must be run on **each** router you want to monitor.
+
 ---
 
 ## Configuration
@@ -200,21 +271,35 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `POLL_INTERVAL`   | no       | `15s`                 | Scrape interval (Go duration format)         |
 | `SERVICE_NAME`    | no       | `tiktelemetry`        | Resource attribute / label                   |
 | `SERVICE_VERSION` | no       | `dev`                 | Resource attribute / label                   |
-| `INSTANCE_ID`     | no       | *(router address)*    | `service.instance.id` / `instance` label     |
+| `INSTANCE_ID`     | no       | *(router address)*    | Single-router target name — only used when `ROUTERS` is unset; defaults to the router address  |
 | `LOG_LEVEL`       | no       | `info`                | Agent log level: `debug`, `info`, `warn`, `error` |
 | `GOMEMLIMIT`      | no       | —                     | Go runtime soft memory ceiling (e.g. `24MiB`)|
 
 ### Router
 
-| Variable              | Required | Default               | Description                              |
-|-----------------------|----------|-----------------------|------------------------------------------|
-| `ROUTER_ADDRESS`      | no       | `192.168.88.1:8728`   | RouterOS API host:port                   |
-| `ROUTER_USER`         | no       | `admin`               | RouterOS API user                        |
-| `ROUTER_PASS`         | **yes**  | *(no default)*        | RouterOS API password                    |
-| `ROUTER_TLS`          | no       | `false`               | Use API-SSL (port typically 8729)        |
-| `ROUTER_TLS_INSECURE` | no       | `false`               | Skip TLS cert verification               |
-| `ROUTER_DIAL_TIMEOUT` | no       | `5s`                  | Dial timeout (Go duration format)        |
-| `ROUTER_MAX_REPLY_ROWS` | no     | `10000`               | Max rows processed per RouterOS reply (bounds memory from a hostile/large reply; `0` = unlimited) |
+| Variable                    | Required | Default               | Description                              |
+|-----------------------------|----------|-----------------------|------------------------------------------|
+| `ROUTERS`                   | no       | —                     | Comma-separated `name@host:port` list of routers to scrape. Each `name` becomes the `target` label. **Replaces** `ROUTER_ADDRESS` when set. Example: `core@192.168.88.1:8728,cap-office@192.168.88.2:8728` |
+| `ROUTER_ADDRESS`            | no       | `192.168.88.1:8728`   | Single-router shorthand — only used when `ROUTERS` is unset |
+| `ROUTER_USER`               | no       | `admin`               | Shared RouterOS API user for all routers    |
+| `ROUTER_PASS`               | **yes**  | *(no default)*        | Shared RouterOS API password               |
+| `ROUTER_TLS`                | no       | `false`               | Use API-SSL (port typically 8729)          |
+| `ROUTER_TLS_INSECURE`       | no       | `false`               | Skip TLS cert verification                 |
+| `ROUTER_DIAL_TIMEOUT`       | no       | `5s`                  | Dial timeout (Go duration format)          |
+| `ROUTER_MAX_REPLY_ROWS`     | no       | `10000`               | Max rows processed per RouterOS reply (bounds memory from a hostile/large reply; `0` = unlimited) |
+| `ROUTER_SCRAPE_CONCURRENCY` | no       | `4`                   | How many routers to scrape in parallel (≥ 1) |
+
+#### Per-router credential overrides
+
+When `ROUTERS` is used, all routers share the `ROUTER_USER` / `ROUTER_PASS` / `ROUTER_TLS` / `ROUTER_TLS_INSECURE` settings above. Override credentials for specific routers with `ROUTER_<NAME>_<FIELD>`, where `NAME` is the router name upper-cased with non-alphanumeric characters replaced by `_`, and `FIELD` is one of `USER`, `PASS`, `TLS`, or `TLS_INSECURE`.
+
+Example: for a router named `cap-office` in `ROUTERS`, set a unique password without affecting other routers:
+
+```
+ROUTER_CAP_OFFICE_PASS=some-other-password
+```
+
+All other routers will keep using the shared `ROUTER_PASS`. The same pattern works for `ROUTER_<NAME>_USER`, `_TLS`, and `_TLS_INSECURE`.
 
 ### OTLP exporter (only used when `otlp` in `EXPORTERS`)
 
@@ -341,22 +426,24 @@ Firewall metrics carry:
 
 TikTelemetry also reports on **its own** health, pushed through the same pipeline (prefixed `tiktelemetry.`) so you can tell whether the agent is working without a separate endpoint. Crucially, these are emitted even when the router is unreachable — so `tiktelemetry.router.up` drops to `0` rather than the series vanishing. They require a metrics-capable exporter (`otlp` or `prometheus`).
 
+All self-metrics carry the `target` label (the router name), so you can alert per router.
+
 | Metric name                        | Unit | Kind    | Attributes   | Description                                       |
 |------------------------------------|------|---------|--------------|---------------------------------------------------|
-| `tiktelemetry.router.up`           | 1    | gauge   | —            | Router API reachable during the last scrape (1/0) |
-| `tiktelemetry.scrape.duration`     | ms   | gauge   | —            | Duration of the last metric scrape                |
-| `tiktelemetry.scrape.samples`      | 1    | gauge   | —            | Samples collected in the last scrape              |
-| `tiktelemetry.scrapes.total`       | 1    | counter | —            | Total metric scrapes performed                    |
-| `tiktelemetry.collector.errors`    | 1    | counter | `collector`  | Collector failures, per collector                 |
-| `tiktelemetry.export.errors`       | 1    | counter | `signal`     | Export failures (`signal=metrics` or `logs`)      |
-| `tiktelemetry.log.collect.errors`  | 1    | counter | —            | Log collection failures                           |
+| `tiktelemetry.router.up`           | 1    | gauge   | `target`     | Router API reachable during the last scrape (1/0) |
+| `tiktelemetry.scrape.duration`     | ms   | gauge   | `target`     | Duration of the last metric scrape                |
+| `tiktelemetry.scrape.samples`      | 1    | gauge   | `target`     | Samples collected in the last scrape              |
+| `tiktelemetry.scrapes.total`       | 1    | counter | `target`     | Total metric scrapes performed                    |
+| `tiktelemetry.collector.errors`    | 1    | counter | `collector`, `target` | Collector failures, per collector          |
+| `tiktelemetry.export.errors`       | 1    | counter | `signal`, `target` | Export failures (`signal=metrics` or `logs`) |
+| `tiktelemetry.log.collect.errors`  | 1    | counter | `target`     | Log collection failures                           |
 
-Useful alerts: `tiktelemetry_router_up == 0` (agent can't reach the router), `rate(tiktelemetry_export_errors[5m]) > 0` (telemetry not landing), or a rising `tiktelemetry_collector_errors`.
+Useful alerts: `tiktelemetry_router_up{target="..."} == 0` (a specific router unreachable), `rate(tiktelemetry_export_errors[5m]) > 0` (telemetry not landing), or a rising `tiktelemetry_collector_errors`.
 
 ### Exporter-specific notes
 
-- **OTLP exporter** — metric names are sent as-is using dot-separated namespacing (`mikrotik.system.cpu.load`). Counters use delta temporality.
-- **Prometheus exporter** — metric names are sanitized to underscores (`mikrotik_system_cpu_load`). The exporter adds `service` and `instance` labels. Counters are sent as absolute cumulative values — use `rate()` in PromQL.
+- **OTLP exporter** — metric names are sent as-is using dot-separated namespacing (`mikrotik.system.cpu.load`). Every metric carries a `target` label set to the router name. Counters use delta temporality.
+- **Prometheus exporter** — metric names are sanitized to underscores (`mikrotik_system_cpu_load`). The exporter adds `service` and `target` labels (the `instance` label is not used). Counters are sent as absolute cumulative values — use `rate()` in PromQL.
 
 ---
 
@@ -377,7 +464,7 @@ The agent tails RouterOS logs via `/log/print` on each poll cycle and pushes the
 ### Exporter-specific notes
 
 - **OTLP exporter** — logs are sent as OTLP log records with severity and attributes.
-- **Loki exporter** — logs are pushed as JSON streams with labels `service`, `source=mikrotik`, `level`, and `instance`. RouterOS topics and the message ID are included as structured metadata.
+- **Loki exporter** — logs are pushed as JSON streams with labels `service`, `source=mikrotik`, `level`, and `target`. RouterOS topics and the message ID are included as structured metadata.
 
 ### Timestamps
 
@@ -492,6 +579,8 @@ The harness waits for the RouterOS API to accept a login (not just for the TCP p
 ## Running on RouterOS
 
 Because the image is a ~14 MB static binary, it runs comfortably in RouterOS v7's built-in `container` feature — no separate server needed. This is the recommended deployment for a single router.
+
+For **multiple routers**, run a single agent off-router (on a Raspberry Pi, VM, or any Docker host) and point it at all your routers via `ROUTERS` — see the [multi-router variant](#multi-router-variant) in the Quick start. Each lean router just needs the API user and reachability; nothing else is installed on them.
 
 RouterOS containers are minimal (no compose, no healthchecks, spartan networking), so the steps below are explicit. Two helper scripts and a built-in preflight check do the heavy lifting:
 
