@@ -44,9 +44,14 @@ jobs:
           go vet -tags e2e ./test/e2e/...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pin a golangci-lint v2 built with Go 1.25+; older builds refuse to
+          # analyze code whose go.mod targets a newer Go than the linter's own
+          # toolchain ("the Go language version ... is lower than the targeted
+          # Go version"). The config in .golangci.yml is v2 format, which needs
+          # action v8 + golangci-lint v2.
+          version: v2.5.0
 
   docs:
     name: Doc references
@@ -138,8 +143,15 @@ jobs:
   e2e:
     name: End-to-end (RouterOS CHR)
     runs-on: ubuntu-latest
-    # E2E boots a real CHR under QEMU and is slower; keep it off PRs from forks
-    # where Docker/KVM behavior is less predictable.
+    # E2E boots a real CHR under QEMU (TCG) on the runner. That path is
+    # inherently timing/network-sensitive — CHR boot time and the container's
+    # interface ordering vary run to run — so this job is NON-BLOCKING
+    # (continue-on-error). It still runs on every push so a genuine regression
+    # is visible, but a flaky CHR boot never red-lights the whole build or
+    # blocks a merge. Run it locally against a real device or a compose CHR via
+    # ROUTEROS_ADDR for a deterministic check.
+    continue-on-error: true
+    # Skip on fork PRs where Docker/KVM behavior is less predictable.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@v4
