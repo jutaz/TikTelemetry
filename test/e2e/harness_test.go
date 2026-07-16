@@ -137,6 +137,20 @@ func provisionRouter(ctx context.Context) (router, func(), error) {
 				PathInContainer:   "/dev/net/tun",
 				CgroupPermissions: "rwm",
 			})
+			// Pass /dev/kvm through when the host exposes it so QEMU runs with
+			// hardware acceleration (-enable-kvm) instead of falling back to TCG
+			// software emulation. Without this the CHR boot takes 5+ minutes and
+			// blows the API-ready budget; with it the guest is up in ~30-60s.
+			// The host's /dev/kvm existing does NOT help unless the device is
+			// actually mapped into the container. Guarded so hosts without KVM
+			// (e.g. some laptops) still run, just slowly.
+			if _, err := os.Stat("/dev/kvm"); err == nil {
+				hc.Devices = append(hc.Devices, container.DeviceMapping{
+					PathOnHost:        "/dev/kvm",
+					PathInContainer:   "/dev/kvm",
+					CgroupPermissions: "rwm",
+				})
+			}
 		},
 		// A listening TCP port only means QEMU forwards it; real readiness is
 		// the API login probe in waitForAPI.

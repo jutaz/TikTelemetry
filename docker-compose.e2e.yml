@@ -22,8 +22,13 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun
-      # Uncomment to use hardware acceleration when the host exposes KVM:
-      # - /dev/kvm
+      # Hardware acceleration: QEMU only uses KVM if /dev/kvm is mapped INTO
+      # the container (the host merely having it is not enough). With it the
+      # CHR boots in ~30-60s; without it QEMU falls back to slow TCG emulation
+      # and boot takes 5+ minutes. Comment this line out on hosts that do not
+      # expose /dev/kvm (e.g. macOS/Windows Docker Desktop) — boot will just be
+      # slower.
+      - /dev/kvm
     ports:
       - "8728:8728" # RouterOS binary API
       - "8729:8729" # RouterOS API-SSL
