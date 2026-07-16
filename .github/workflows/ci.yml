@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.25.12"
           cache: true
 
       - name: Verify formatting
@@ -85,7 +85,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.25.12"
           cache: true
 
       - name: Test with race detector and coverage
@@ -113,7 +113,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.25.12"
           cache: true
 
       - name: Build static binary (${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }})
@@ -132,7 +132,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.25.12"
           cache: true
 
       - name: govulncheck
@@ -159,7 +159,7 @@ jobs:
 
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.25.12"
           cache: true
 
       - name: Enable KVM acceleration
