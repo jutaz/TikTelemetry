@@ -13,7 +13,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -58,7 +58,7 @@ jobs:
     name: Doc references
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v5
         with:
@@ -82,7 +82,7 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -110,7 +110,7 @@ jobs:
           - goarch: arm64
           - goarch: amd64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -129,7 +129,7 @@ jobs:
     name: Vulnerability scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
@@ -157,7 +157,7 @@ jobs:
     # Skip on fork PRs where Docker/KVM behavior is less predictable.
     if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
