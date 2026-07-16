@@ -149,3 +149,22 @@ line number.
 Keep commits focused and scoped. Write imperative subject lines
 ("Add health collector", not "Added ..."), and explain the *why* in the body
 when it is not obvious.
+
+## Releasing
+
+The git tag is the version — there is no `VERSION` file. At runtime the binary
+reports its version from the module build info
+([`runtime/debug.ReadBuildInfo`](https://pkg.go.dev/runtime/debug#ReadBuildInfo)):
+the tag for a released or `go install`ed build, or a `dev-<revision>` string for
+a local build. The release workflow also stamps the tag in explicitly via
+`-ldflags -X main.version`.
+
+To cut a release, either:
+
+1. Push a tag — `git tag v0.1.0 && git push origin v0.1.0`, or
+2. Run the **Release** workflow from the Actions tab with a `version` input
+   (it creates the tag + GitHub Release for you).
+
+Either path builds and pushes the multi-arch image to GHCR and attaches the
+per-arch offline tarballs to the release. Update `CHANGELOG.md` (move the
+`Unreleased` entries under the new version) as part of the release PR.

@@ -1,18 +1,76 @@
 name: Release
 
+# Two ways to cut a release, both landing in the same build/publish path:
+#
+#   1. Push a git tag:   git tag v0.1.0 && git push origin v0.1.0
+#      (the idiomatic Go way — the tag IS the version; go install / the module
+#      proxy read it directly)
+#   2. Run this workflow from the Actions UI with a `version` input, and it
+#      creates the tag + GitHub Release for you.
+#
+# In both cases the image + offline tarballs are built and published in this
+# same run. We deliberately do the build here rather than relying on the tag
+# push to re-trigger, because GitHub does not fire workflows for tags/releases
+# created by GITHUB_TOKEN (the workflow_dispatch path would otherwise stall).
+
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v0.1.0 (a git tag + Release are created)"
+        required: true
+        type: string
 
 permissions:
-  contents: write # needed to attach assets to the GitHub Release
-  packages: write # needed to push to GHCR
+  contents: write # create the tag + release and attach assets
+  packages: write # push to GHCR
 
 jobs:
+  # Resolve the tag to publish. On a tag push it's the pushed ref; on a manual
+  # dispatch it creates the tag + release, then hands the tag to the build jobs.
+  prepare:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: tag
+        name: Determine tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            tag="$INPUT_VERSION"
+            case "$tag" in
+              v*) ;;
+              *) echo "::error::version must start with 'v' (got '$tag')"; exit 1 ;;
+            esac
+            # Create the tag + release if it doesn't already exist (idempotent).
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag already exists; publishing to it." >> "$GITHUB_STEP_SUMMARY"
+            else
+              gh release create "$tag" \
+                --title "$tag" \
+                --generate-notes \
+                --target "$GITHUB_SHA"
+              echo "Created release $tag." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   image:
     name: Build & push multi-arch image
     runs-on: ubuntu-latest
+    needs: prepare
     steps:
       - uses: actions/checkout@v4
 
@@ -35,8 +93,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
             type=raw,value=latest
 
       - name: Build and push (multi-arch)
@@ -46,13 +104,14 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ needs.prepare.outputs.tag }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
   tarballs:
     name: Offline image tarballs
     runs-on: ubuntu-latest
+    needs: prepare
     # Per-architecture `docker save` tarballs for offline RouterOS import
     # (/container/add file=...), which avoids all registry authentication.
     strategy:
@@ -74,17 +133,20 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build single-arch image and save as tar
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           docker buildx build \
             --platform ${{ matrix.platform }} \
-            --build-arg VERSION=${{ github.ref_name }} \
+            --build-arg VERSION="$TAG" \
             -t tiktelemetry:${{ matrix.arch }} --load .
           docker save tiktelemetry:${{ matrix.arch }} \
-            -o tiktelemetry-${{ github.ref_name }}-${{ matrix.arch }}.tar
-          gzip -9 tiktelemetry-${{ github.ref_name }}-${{ matrix.arch }}.tar
+            -o "tiktelemetry-$TAG-${{ matrix.arch }}.tar"
+          gzip -9 "tiktelemetry-$TAG-${{ matrix.arch }}.tar"
 
       - name: Attach tarball to the release
         uses: softprops/action-gh-release@v2
         with:
-          files: tiktelemetry-${{ github.ref_name }}-${{ matrix.arch }}.tar.gz
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          files: tiktelemetry-${{ needs.prepare.outputs.tag }}-${{ matrix.arch }}.tar.gz
           fail_on_unmatched_files: true

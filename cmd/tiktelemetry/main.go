@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -24,8 +25,49 @@ import (
 	_ "github.com/jutaz/tiktelemetry/internal/exporters"
 )
 
-// version is overridable at build time with -ldflags "-X main.version=...".
-var version = "dev"
+// version, when set via -ldflags "-X main.version=..." (as the release build
+// does), takes precedence. Otherwise the version is derived natively from the
+// module build info: the git tag for a released/`go install`ed binary, or the
+// VCS revision for a local build. There is no VERSION file — the git tag is the
+// source of truth.
+var version = ""
+
+// resolveVersion returns the effective version string, preferring an explicit
+// ldflags value, then the module release version, then a VCS-stamped dev build.
+func resolveVersion() string {
+	if version != "" {
+		return version
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	// A tagged release or `go install ...@vX.Y.Z` yields e.g. "v0.1.0".
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	// Local build from source: compose from the VCS build settings.
+	var rev, modified string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			modified = s.Value
+		}
+	}
+	if rev == "" {
+		return "dev"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	v := "dev-" + rev
+	if modified == "true" {
+		v += "-dirty"
+	}
+	return v
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -49,8 +91,9 @@ func run(args []string) int {
 		return 2
 	}
 
+	ver := resolveVersion()
 	if *showVersion {
-		fmt.Println("tiktelemetry", version)
+		fmt.Println("tiktelemetry", ver)
 		return 0
 	}
 
@@ -62,12 +105,12 @@ func run(args []string) int {
 	}
 
 	if *checkMode {
-		return runCheck(cfg)
+		return runCheck(cfg, ver)
 	}
 
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
-	logger.Info("starting tiktelemetry", "version", version)
+	logger.Info("starting tiktelemetry", "version", ver)
 
 	// Root context cancelled on SIGINT/SIGTERM for graceful shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -98,11 +141,11 @@ func run(args []string) int {
 
 // runCheck executes the preflight diagnostics and prints a human-readable
 // report to stdout. It returns 0 when every check passes, 1 otherwise.
-func runCheck(cfg config.Config) int {
+func runCheck(cfg config.Config, ver string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	fmt.Printf("tiktelemetry %s — preflight check\n\n", version)
+	fmt.Printf("tiktelemetry %s — preflight check\n\n", ver)
 	report := preflight.Run(ctx, cfg)
 
 	for _, res := range report.Results {
