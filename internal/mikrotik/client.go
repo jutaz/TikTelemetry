@@ -5,6 +5,7 @@ package mikrotik
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"log/slog"
 	"sync"
 
@@ -48,6 +49,18 @@ func (c *Client) Run(ctx context.Context, cmd ...string) (*routeros.Reply, error
 
 	reply, err := c.cli.RunArgsContext(ctx, cmd)
 	if err != nil {
+		// A !trap is a per-command error (bad/unknown command, missing item,
+		// permission) that the router replied with over a HEALTHY session — for
+		// example querying a wireless table on a router with no radios. Return
+		// it to the caller (collectors classify and often swallow it) WITHOUT
+		// tearing down the connection, otherwise every scrape on a wired router
+		// would log a spurious "connection lost" and reconnect needlessly.
+		//
+		// Any other error (transport failure, !fatal, unknown reply word) means
+		// the session is gone: close and nil it so the next call re-dials.
+		if isDeviceTrap(err) {
+			return nil, err
+		}
 		c.logger.Warn("RouterOS connection lost, will reconnect",
 			"address", c.cfg.Address,
 			"error", err,
@@ -69,6 +82,20 @@ func (c *Client) Run(ctx context.Context, cmd ...string) (*routeros.Reply, error
 		)
 	}
 	return reply, nil
+}
+
+// isDeviceTrap reports whether err is a RouterOS !trap reply, i.e. a
+// command-level error the device returned over an otherwise healthy connection
+// (as opposed to a !fatal, which signals the session is being torn down). The
+// go-routeros library models both as *routeros.DeviceError but records the
+// originating sentence word, so we distinguish on that rather than matching the
+// human-readable message.
+func isDeviceTrap(err error) bool {
+	var de *routeros.DeviceError
+	if !errors.As(err, &de) || de.Sentence == nil {
+		return false
+	}
+	return de.Sentence.Word == "!trap"
 }
 
 // capRows truncates reply.Re to at most max rows when max > 0. It returns true
