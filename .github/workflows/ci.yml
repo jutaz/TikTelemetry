@@ -44,7 +44,7 @@ jobs:
           go vet -tags e2e ./test/e2e/...
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           # Pin a golangci-lint v2 built with Go 1.25+; older builds refuse to
           # analyze code whose go.mod targets a newer Go than the linter's own
