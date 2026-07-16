@@ -86,7 +86,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          # arm/v6, not arm/v7: the arm binary is built GOARM=6 for MikroTik
+          # compatibility (GOARM=7's VFPv3 float ops SIGILL on several MikroTik
+          # ARM SoCs). Labelling the manifest arm/v6 keeps it truthful; armv6
+          # also runs on armv7 hosts. See the Dockerfile.
+          platforms: linux/amd64,linux/arm64,linux/arm/v6
           push: true
           build-args: |
             VERSION=${{ needs.prepare.outputs.tag }}
@@ -103,7 +107,7 @@ jobs:
       matrix:
         include:
           - arch: arm
-            platform: linux/arm/v7
+            platform: linux/arm/v6
           - arch: arm64
             platform: linux/arm64
           - arch: amd64

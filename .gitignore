@@ -1,6 +1,6 @@
 # Build artifacts
 /tiktelemetry
-/tiktelemetry-armv7
+/tiktelemetry-arm
 /tiktelemetry-arm64
 /dist/
 *.exe

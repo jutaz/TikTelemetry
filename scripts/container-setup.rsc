@@ -169,7 +169,11 @@
 # Common issues:
 #   - Container won't start        -> device-mode not enabled, or arch mismatch
 #                                     (check /system/resource/print architecture-name;
-#                                      arm=armv7, arm64=arm64, x86=amd64).
+#                                      arm->arm image, arm64->arm64, x86->amd64).
+#   - Starts then "signal 4 (Illegal instruction)" on an `arm` board
+#                                  -> ARMv5 board (EN7562CT / hEX Refresh): the
+#                                     stock arm image is GOARM=6; that board needs
+#                                     a GOARM=5 build. Other arm boards work as-is.
 #   - "won't start", no clear log  -> DNS not set (see step 1).
 #   - Push fails, router API OK     -> no route/NAT to internet, or wrong token.
 #   - API connect fails            -> /ip/service api address allow-list, or the

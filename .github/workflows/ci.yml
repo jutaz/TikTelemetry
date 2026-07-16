@@ -105,8 +105,11 @@ jobs:
     strategy:
       matrix:
         include:
+          # GOARM=6 (not 7): matches the shipped image. GOARM=7's VFPv3 float
+          # instructions crash (SIGILL) on several MikroTik ARM SoCs; GOARM=6
+          # runs on all of them. See the Dockerfile for the full rationale.
           - goarch: arm
-            goarm: "7"
+            goarm: "6"
           - goarch: arm64
           - goarch: amd64
     steps:

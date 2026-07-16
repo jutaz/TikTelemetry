@@ -7,7 +7,7 @@ PKG         := ./cmd/tiktelemetry
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS     := -s -w -X main.version=$(VERSION)
 IMAGE       ?= ghcr.io/jutaz/tiktelemetry:latest
-PLATFORMS   ?= linux/amd64,linux/arm64,linux/arm/v7
+PLATFORMS   ?= linux/amd64,linux/arm64,linux/arm/v6
 
 # Map a friendly arch name to Docker platform + tar suffix for `image-tar`.
 # Override ARCH to build a single-arch tar, e.g. `make image-tar ARCH=arm64`.
@@ -25,9 +25,12 @@ build: ## Build the binary for the host platform
 	go build -ldflags="$(LDFLAGS)" -o $(BINARY) $(PKG)
 
 .PHONY: build-arm
-build-arm: ## Cross-compile a static ARM32 (armv7) binary
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
-		go build -ldflags="$(LDFLAGS)" -o $(BINARY)-armv7 $(PKG)
+build-arm: ## Cross-compile a static ARM32 binary for MikroTik (GOARM=6)
+	# GOARM=6, not 7: GOARM=7's VFPv3 float instructions SIGILL on several
+	# MikroTik ARM SoCs. GOARM=6 runs on all of them (bar the ARMv5 hEX
+	# Refresh) at no meaningful cost for this workload. See the Dockerfile.
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 \
+		go build -ldflags="$(LDFLAGS)" -o $(BINARY)-arm $(PKG)
 
 .PHONY: build-arm64
 build-arm64: ## Cross-compile a static ARM64 binary
@@ -108,7 +111,7 @@ image: ## Build and push the multi-arch container image
 .PHONY: image-tar
 image-tar: ## Build a single-arch image and save it as a .tar for offline RouterOS import (ARCH=arm|arm64|amd64)
 	@case "$(ARCH)" in \
-	  arm)   platform=linux/arm/v7 ;; \
+	  arm)   platform=linux/arm/v6 ;; \
 	  arm64) platform=linux/arm64 ;; \
 	  amd64) platform=linux/amd64 ;; \
 	  *) echo "unknown ARCH=$(ARCH) (use arm, arm64, or amd64)"; exit 1 ;; \
@@ -129,4 +132,4 @@ run: ## Build and run locally (reads .env if present via your shell)
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	rm -f $(BINARY) $(BINARY)-armv7 $(BINARY)-arm64 coverage.out coverage.html tiktelemetry-*.tar
+	rm -f $(BINARY) $(BINARY)-arm $(BINARY)-arm64 coverage.out coverage.html tiktelemetry-*.tar

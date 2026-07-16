@@ -58,7 +58,7 @@ The agent runs one or more continuous scrape loops in parallel — one per confi
 
 ## Features
 
-- **Multi-arch static image** — `linux/amd64`, `linux/arm64`, `linux/arm/v7` in a single manifest
+- **Multi-arch static image** — `linux/amd64`, `linux/arm64`, `linux/arm/v6` (MikroTik-compatible) in a single manifest
 - **Scratch container** — ~14 MB binary, no BusyBox, no Alpine, no CVEs from system packages
 - **Multi-router HUB** — one agent scrapes many routers in parallel; lean routers need nothing installed
 - **Metrics + logs** — both from a single binary
@@ -549,24 +549,34 @@ Then substitute `tiktelemetry:dev` for `ghcr.io/jutaz/tiktelemetry:latest` in th
 ### Cross-compile for ARM
 
 ```bash
-# ARMv7 (32-bit)
-CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
-  go build -ldflags="-s -w" -o tiktelemetry-armv7 ./cmd/tiktelemetry
+# 32-bit ARM (MikroTik) — GOARM=6, NOT 7
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 \
+  go build -ldflags="-s -w" -o tiktelemetry-arm ./cmd/tiktelemetry
 
 # ARM64
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -ldflags="-s -w" -o tiktelemetry-arm64 ./cmd/tiktelemetry
 ```
 
+The 32-bit ARM build uses **`GOARM=6`**, not `GOARM=7`. `GOARM=7` emits VFPv3
+floating-point instructions that several MikroTik ARM SoCs do not implement, so
+the binary crashes on the router with `exited with signal 4 (Illegal
+instruction)`. `GOARM=6` (VFPv1/v2) is a strict subset that runs on every
+MikroTik ARM container host — except the ARMv5 EN7562CT (hEX Refresh), which
+needs a dedicated `GOARM=5` build — with no meaningful cost for this I/O-bound
+agent.
+
 ### Multi-arch Docker image (buildx)
 
 ```bash
 docker buildx build \
-  --platform linux/amd64,linux/arm64,linux/arm/v7 \
+  --platform linux/amd64,linux/arm64,linux/arm/v6 \
   -t youruser/tiktelemetry:latest --push .
 ```
 
-The Dockerfile uses a two-stage scratch build with automatic `GOARM` derivation from buildx's `TARGETVARIANT`.
+The Dockerfile is a two-stage scratch build. It pins the 32-bit ARM target to
+`GOARM=6` regardless of buildx's `TARGETVARIANT` (see above), which is why the
+ARM image is published as `linux/arm/v6`.
 
 ---
 
@@ -614,9 +624,11 @@ RouterOS containers are minimal (no compose, no healthchecks, spartan networking
 
    | RouterOS `architecture-name` | Image / tarball arch |
    |------------------------------|----------------------|
-   | `arm`                        | `arm` (linux/arm/v7) |
+   | `arm`                        | `arm` (linux/arm/v6) |
    | `arm64`                      | `arm64`              |
    | `x86_64`                     | `amd64`              |
+
+   > The `arm` image is built `GOARM=6` for broad MikroTik compatibility. If a board reports `arm` but the container still crashes with `exited with signal 4 (Illegal instruction)`, it is likely the ARMv5 EN7562CT (hEX Refresh), which needs a dedicated `GOARM=5` build.
 
    A wrong-architecture image will fail to start, often without a clear error — this is the #1 gotcha.
 
