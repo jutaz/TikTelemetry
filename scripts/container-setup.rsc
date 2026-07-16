@@ -117,9 +117,12 @@
 #
 # --- Method A (recommended): offline tarball ---------------------------------
 # 1. On your workstation, build and save the image for YOUR router's arch:
-#        make image-tar ARCH=arm64      # or ARCH=arm (armv7) / ARCH=amd64
+#        make image-tar ARCH=arm64      # arm | armv5 | arm64 | amd64
+#    Match the board (see the README arch table). Most `arm` boards use
+#    ARCH=arm; the EN7562CT boards (hEX Refresh, hEX S 2025) MUST use
+#    ARCH=armv5 or they crash with "Illegal instruction".
 #    (or download the matching tiktelemetry-<version>-<arch>.tar.gz from the
-#    GitHub Releases page and gunzip it).
+#    GitHub Releases page and gunzip it — e.g. -armv5 for EN7562CT boards).
 # 2. Upload the .tar to the router (WinBox Files drag-and-drop, or scp) into
 #    your storage, e.g. disk1/tiktelemetry.tar.
 # 3. Create the container from the file:
@@ -129,7 +132,9 @@
 # Requires internet on the router during pull. GHCR usually needs auth even for
 # public images; set credentials first if so:
 #   /container/config/set registry-url=https://ghcr.io username=<gh-user> password=<gh-PAT-with-read:packages>
-# Then:
+# Then (use the :latest-armv5 tag instead on EN7562CT boards — hEX Refresh,
+# hEX S 2025 — because RouterOS ignores the image's ARM variant and would
+# otherwise pull the FPU-requiring default):
 #   /container/add remote-image=ghcr.io/jutaz/tiktelemetry:latest interface=veth-tik root-dir=disk1/tik-root envlist=tik logging=yes start-on-boot=yes comment="TikTelemetry"
 
 # -----------------------------------------------------------------------------
@@ -171,9 +176,11 @@
 #                                     (check /system/resource/print architecture-name;
 #                                      arm->arm image, arm64->arm64, x86->amd64).
 #   - Starts then "signal 4 (Illegal instruction)" on an `arm` board
-#                                  -> ARMv5 board (EN7562CT / hEX Refresh): the
-#                                     stock arm image is GOARM=6; that board needs
-#                                     a GOARM=5 build. Other arm boards work as-is.
+#                                  -> EN7562CT board (hEX Refresh, hEX S 2025):
+#                                     it is ARMv5/no-FPU. Use the -armv5 image
+#                                     (ARCH=armv5 tarball or :latest-armv5 tag).
+#                                     Every other arm board uses the default arm
+#                                     image. Check /system/resource/print `cpu`.
 #   - "won't start", no clear log  -> DNS not set (see step 1).
 #   - Push fails, router API OK     -> no route/NAT to internet, or wrong token.
 #   - API connect fails            -> /ip/service api address allow-list, or the

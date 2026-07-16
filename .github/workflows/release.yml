@@ -90,12 +90,47 @@ jobs:
           # compatibility (GOARM=7's VFPv3 float ops SIGILL on several MikroTik
           # ARM SoCs). Labelling the manifest arm/v6 keeps it truthful; armv6
           # also runs on armv7 hosts. See the Dockerfile.
+          #
+          # The ARMv5 EN7562CT boards (hEX Refresh, hEX S 2025) are handled by
+          # a SEPARATE -armv5 tag below, not a v5 entry here: RouterOS ignores
+          # the OCI variant field and would grab this arm (=v6) blob, which
+          # SIGILLs on ARMv5. A distinct tag is the only way those users can
+          # select the right image.
           platforms: linux/amd64,linux/arm64,linux/arm/v6
           push: true
           build-args: |
             VERSION=${{ needs.prepare.outputs.tag }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Docker metadata (armv5)
+        id: meta-armv5
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # Suffix every tag with -armv5 so this never collides with or
+          # overwrites the main multi-arch manifest (e.g. v0.1.0-armv5,
+          # 0.1-armv5, latest-armv5). No bare `latest`.
+          flavor: |
+            latest=false
+            suffix=-armv5,onlatest=true
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.tag }}
+            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+
+      - name: Build and push (armv5, EN7562CT / hEX Refresh & hEX S 2025)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # linux/arm/v5 -> the Dockerfile maps TARGETVARIANT=v5 to GOARM=5,
+          # the only variant that runs on the FPU-less ARMv5 EN7562CT SoC.
+          platforms: linux/arm/v5
+          push: true
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.tag }}
+          tags: ${{ steps.meta-armv5.outputs.tags }}
+          labels: ${{ steps.meta-armv5.outputs.labels }}
 
   tarballs:
     name: Offline image tarballs
@@ -108,6 +143,11 @@ jobs:
         include:
           - arch: arm
             platform: linux/arm/v6
+          # ARMv5 for the FPU-less EN7562CT boards (hEX Refresh, hEX S 2025).
+          # A separate tarball because RouterOS ignores the OCI variant, so
+          # those users must import this file explicitly.
+          - arch: armv5
+            platform: linux/arm/v5
           - arch: arm64
             platform: linux/arm64
           - arch: amd64

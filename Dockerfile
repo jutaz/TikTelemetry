@@ -8,7 +8,12 @@
 # compatibility, so it is published as linux/arm/v6.
 
 # ── Stage 1: Build ──────────────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS builder
+# Pin the builder to the BUILD platform (the host's native arch), not the
+# target. The Go toolchain cross-compiles to any GOOS/GOARCH/GOARM, so we never
+# need a target-arch toolchain image — which matters because golang:alpine has
+# no armv5 variant (the EN7562CT / hEX Refresh target). This also avoids running
+# the compile under QEMU emulation, so arm builds are much faster.
+FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache ca-certificates git
 
@@ -18,6 +23,8 @@ RUN go mod download
 
 COPY . .
 
+# TARGETOS/TARGETARCH/TARGETVARIANT are the image's target platform (populated
+# by buildx), which we translate into Go cross-compile settings below.
 ARG TARGETOS TARGETARCH TARGETVARIANT
 # VERSION is stamped into the binary and reported by `tiktelemetry --version`.
 ARG VERSION=dev

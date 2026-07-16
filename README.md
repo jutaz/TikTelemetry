@@ -620,17 +620,32 @@ RouterOS containers are minimal (no compose, no healthchecks, spartan networking
 
 ### Prerequisites
 
-1. **A supported architecture.** Containers run on `arm`, `arm64`, and `x86` boards only (not `mipsbe`/`smips`). Check with `/system/resource/print` and match the image:
+1. **A supported architecture.** Containers run on `arm`, `arm64`, and `x86` boards only (not `mipsbe`/`smips`/`tile`). Check the board with `/system/resource/print` (look at both `architecture-name` and `cpu`) and match the image:
 
-   | RouterOS `architecture-name` | Image / tarball arch |
-   |------------------------------|----------------------|
-   | `arm`                        | `arm` (linux/arm/v6) |
-   | `arm64`                      | `arm64`              |
-   | `x86_64`                     | `amd64`              |
-
-   > The `arm` image is built `GOARM=6` for broad MikroTik compatibility. If a board reports `arm` but the container still crashes with `exited with signal 4 (Illegal instruction)`, it is likely the ARMv5 EN7562CT (hEX Refresh), which needs a dedicated `GOARM=5` build.
+   | RouterOS `architecture-name` | CPU | Image tag / tarball arch | Docker platform |
+   |------------------------------|-----|--------------------------|-----------------|
+   | `arm64`                      | any | `latest` / `arm64`       | `linux/arm64`   |
+   | `x86_64`                     | any | `latest` / `amd64`       | `linux/amd64`   |
+   | `arm`                        | **EN7562CT** (see below) | `latest-armv5` / `armv5` | `linux/arm/v5` |
+   | `arm`                        | any other | `latest` / `arm`     | `linux/arm/v6`  |
 
    A wrong-architecture image will fail to start, often without a clear error — this is the #1 gotcha.
+
+   #### The ARMv5 exception (EN7562CT boards)
+
+   Most MikroTik `arm` boards have a hardware FPU, so the default `arm` image is built `GOARM=6` (which also runs on `armv7` hosts). A few boards use the **EN7562CT** SoC, which is **ARMv5 with no FPU** — a `GOARM=6`/`GOARM=7` binary crashes on them with `exited with signal 4 (Illegal instruction) : CPU not supported`. Those boards need the separate **`-armv5`** image (built `GOARM=5`, software float).
+
+   Known EN7562CT boards (RouterOS reports `architecture-name: arm`, `cpu: EN7562CT`):
+
+   | Board | Product code | Notes |
+   |-------|--------------|-------|
+   | hEX Refresh | E60iUG | 2024 refresh; ARM32 (early “64-bit” marketing was walked back) |
+   | hEX S (2025) | E60iUGS | 2025 model; **not** the older MMIPS RB760iGS |
+   | hAP ax lite / hAP ax² S family | varies | same EN7562CT SoC where present |
+
+   > The **original hEX S (RB760iGS)** is a different, older board: it is **MMIPS** (MediaTek MT7621), which does **not** support containers at all — neither image applies.
+
+   If `cpu` shows `EN7562CT`, use the `-armv5` image/tarball. Every other `arm` board uses the default `arm` image. When in doubt, run the [preflight](#5-verify-the-configuration) — `tiktelemetry --check` prints the board’s architecture it detected.
 
 2. **The `container` package**, installed for your architecture and the router rebooted. It ships in the "extra packages" archive on the MikroTik download page (it is *not* in the main package). On RouterOS 7.18+ apply it with `/system/package/apply-changes`; on older versions a normal reboot is correct. Verify with `/container/config/print`.
 
@@ -648,9 +663,11 @@ RouterOS containers are minimal (no compose, no healthchecks, spartan networking
 
 2. **Get the image onto the router.** Offline import is the most reliable path (it needs no registry login, which is the usual failure point):
    ```sh
-   make image-tar ARCH=arm64      # or arm / amd64 to match the board
+   make image-tar ARCH=arm64      # arm | armv5 | arm64 | amd64 — match the board (see the arch table above)
    ```
    or download the matching `tiktelemetry-<version>-<arch>.tar.gz` from the [Releases](https://github.com/jutaz/tiktelemetry/releases) page and `gunzip` it. Upload the `.tar` to the router's external storage (WinBox Files drag-and-drop, or `scp`).
+
+   > **EN7562CT boards** (hEX Refresh, hEX S 2025): use `ARCH=armv5` / the `tiktelemetry-<version>-armv5.tar.gz` tarball, or the `ghcr.io/jutaz/tiktelemetry:latest-armv5` image. The default `arm` artifact will crash with “Illegal instruction” on them.
 
    Alternatively, pull from GHCR by setting `/container/config` credentials (a GitHub token with `read:packages`) — see the script.
 

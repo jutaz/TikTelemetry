@@ -105,11 +105,16 @@ jobs:
     strategy:
       matrix:
         include:
-          # GOARM=6 (not 7): matches the shipped image. GOARM=7's VFPv3 float
-          # instructions crash (SIGILL) on several MikroTik ARM SoCs; GOARM=6
-          # runs on all of them. See the Dockerfile for the full rationale.
+          # GOARM=6 (not 7): matches the shipped `arm` image. GOARM=7's VFPv3
+          # float instructions crash (SIGILL) on several MikroTik ARM SoCs;
+          # GOARM=6 runs on all of them. See the Dockerfile for the rationale.
           - goarch: arm
             goarm: "6"
+          # GOARM=5 (soft float): the separate -armv5 image for the FPU-less
+          # EN7562CT boards (hEX Refresh, hEX S 2025). Built here so a break is
+          # caught in CI, not at release time.
+          - goarch: arm
+            goarm: "5"
           - goarch: arm64
           - goarch: amd64
     steps:

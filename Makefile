@@ -27,10 +27,18 @@ build: ## Build the binary for the host platform
 .PHONY: build-arm
 build-arm: ## Cross-compile a static ARM32 binary for MikroTik (GOARM=6)
 	# GOARM=6, not 7: GOARM=7's VFPv3 float instructions SIGILL on several
-	# MikroTik ARM SoCs. GOARM=6 runs on all of them (bar the ARMv5 hEX
-	# Refresh) at no meaningful cost for this workload. See the Dockerfile.
+	# MikroTik ARM SoCs. GOARM=6 runs on all of them except the ARMv5 EN7562CT
+	# boards (hEX Refresh, hEX S 2025) — see build-arm5 — at no meaningful cost
+	# for this workload. See the Dockerfile.
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 \
 		go build -ldflags="$(LDFLAGS)" -o $(BINARY)-arm $(PKG)
+
+.PHONY: build-arm5
+build-arm5: ## Cross-compile a static ARMv5 binary for EN7562CT boards (GOARM=5)
+	# For the FPU-less ARMv5 EN7562CT boards (hEX Refresh, hEX S 2025), which
+	# SIGILL on the GOARM=6 build. Soft float; negligible cost for this agent.
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=5 \
+		go build -ldflags="$(LDFLAGS)" -o $(BINARY)-armv5 $(PKG)
 
 .PHONY: build-arm64
 build-arm64: ## Cross-compile a static ARM64 binary
@@ -109,12 +117,13 @@ image: ## Build and push the multi-arch container image
 	docker buildx build --platform $(PLATFORMS) --build-arg VERSION=$(VERSION) -t $(IMAGE) --push .
 
 .PHONY: image-tar
-image-tar: ## Build a single-arch image and save it as a .tar for offline RouterOS import (ARCH=arm|arm64|amd64)
+image-tar: ## Build a single-arch image and save it as a .tar for offline RouterOS import (ARCH=arm|armv5|arm64|amd64)
 	@case "$(ARCH)" in \
 	  arm)   platform=linux/arm/v6 ;; \
+	  armv5) platform=linux/arm/v5 ;; \
 	  arm64) platform=linux/arm64 ;; \
 	  amd64) platform=linux/amd64 ;; \
-	  *) echo "unknown ARCH=$(ARCH) (use arm, arm64, or amd64)"; exit 1 ;; \
+	  *) echo "unknown ARCH=$(ARCH) (use arm, armv5, arm64, or amd64)"; exit 1 ;; \
 	esac; \
 	echo "Building $(IMAGE) for $$platform ..."; \
 	docker buildx build --platform $$platform --build-arg VERSION=$(VERSION) \
@@ -132,4 +141,4 @@ run: ## Build and run locally (reads .env if present via your shell)
 
 .PHONY: clean
 clean: ## Remove build artifacts
-	rm -f $(BINARY) $(BINARY)-arm $(BINARY)-arm64 coverage.out coverage.html tiktelemetry-*.tar
+	rm -f $(BINARY) $(BINARY)-arm $(BINARY)-armv5 $(BINARY)-arm64 coverage.out coverage.html tiktelemetry-*.tar
