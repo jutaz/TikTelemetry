@@ -457,6 +457,14 @@ Useful alerts: `tiktelemetry_router_up{target="..."} == 0` (a specific router un
 
 ---
 
+## Dashboard
+
+A ready-to-import Grafana dashboard lives at [`dashboards/tiktelemetry.json`](dashboards/tiktelemetry.json). It covers router health (CPU, memory, uptime, up/down), per-interface throughput and errors, connections, DHCP, VPN/session counts, and the agent's own health — all filterable by `target` so it works for a single router or a multi-router hub.
+
+Import it in Grafana via **Dashboards → New → Import**, paste the JSON, and pick your Prometheus (or Grafana Cloud) data source.
+
+---
+
 ## Logs
 
 The agent tails RouterOS logs via `/log/print` on each poll cycle and pushes them to every enabled exporter that handles logs.
