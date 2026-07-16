@@ -51,6 +51,10 @@ type LogEntry struct {
 	// Time is when the router recorded the event.
 	Time time.Time
 
+	// Target identifies which router the entry came from. Emitted as a label so
+	// a shared backend can distinguish routers.
+	Target string
+
 	// Topics are the RouterOS logging topics attached to the entry
 	// (e.g. "system", "info", "firewall").
 	Topics []string

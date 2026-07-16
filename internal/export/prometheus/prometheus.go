@@ -33,7 +33,6 @@ type prometheusSink struct {
 	logger   *slog.Logger
 	svcName  string
 	svcVer   string
-	instance string
 }
 
 // Compile-time interface check.
@@ -95,9 +94,9 @@ func (p *prometheusSink) ConsumeMetrics(ctx context.Context, samples []model.Sam
 			})
 		}
 
-		// Resource-level labels that identify the agent and its target.
+		// The agent (hub) identity. Per-router identity travels as the "target"
+		// sample attribute, added by the collection layer.
 		labels = append(labels, label{Name: "service", Value: p.svcName})
-		labels = append(labels, label{Name: "instance", Value: p.instance})
 
 		// Labels MUST be sorted lexicographically by name (remote_write contract).
 		sort.Slice(labels, func(i, j int) bool {
@@ -199,6 +198,5 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (export.Si
 		logger:   logger,
 		svcName:  cfg.ServiceName,
 		svcVer:   cfg.ServiceVersion,
-		instance: cfg.InstanceID,
 	}, nil
 }

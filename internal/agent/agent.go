@@ -1,11 +1,13 @@
 // Package agent wires the MikroTik collection layer to the composable export
-// layer and drives the periodic scrape/push loop. It collects each signal once
-// per tick and fans it out to every configured sink via the MultiSink.
+// layer and drives the periodic scrape/push loop. It acts as a hub: it scrapes
+// every configured router in parallel, stamps each router's telemetry with a
+// "target" label, and fans the merged result out to every configured sink.
 package agent
 
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jutaz/tiktelemetry/internal/config"
@@ -14,20 +16,23 @@ import (
 	"github.com/jutaz/tiktelemetry/internal/model"
 )
 
-// Agent owns the router client, collectors, export sinks and the run loop.
+// target is one router the hub scrapes, with its own client, log cursor, and
+// self-metrics.
+type target struct {
+	name       string
+	client     *mikrotik.Client
+	collectors []mikrotik.Collector
+	logColl    *mikrotik.LogCollector
+	self       *selfMetrics
+}
+
+// Agent scrapes a set of routers and pushes their telemetry to the sinks.
 type Agent struct {
 	cfg    config.Config
 	logger *slog.Logger
 
-	client     *mikrotik.Client
-	collectors []mikrotik.Collector
-	logColl    *mikrotik.LogCollector
-
-	sinks *export.MultiSink
-
-	// self accumulates the agent's own operational metrics (scrape health,
-	// errors, router reachability).
-	self *selfMetrics
+	targets []*target
+	sinks   *export.MultiSink
 
 	// wantMetrics / wantLogs cache whether any sink consumes each signal, so we
 	// skip the corresponding router queries entirely when nothing wants them.
@@ -35,8 +40,8 @@ type Agent struct {
 	wantLogs    bool
 }
 
-// New constructs an Agent from resolved configuration and the built sinks. The
-// router client is created lazily and connects on first scrape.
+// New constructs an Agent from resolved configuration and the built sinks. Each
+// router's client is created lazily and connects on first scrape.
 func New(cfg config.Config, logger *slog.Logger, sinks *export.MultiSink) *Agent {
 	collectors, unknown := mikrotik.SelectCollectors(cfg.Collectors)
 	if len(unknown) > 0 {
@@ -46,115 +51,190 @@ func New(cfg config.Config, logger *slog.Logger, sinks *export.MultiSink) *Agent
 	a := &Agent{
 		cfg:         cfg,
 		logger:      logger,
-		client:      mikrotik.New(cfg.Router, logger),
-		collectors:  collectors,
 		sinks:       sinks,
-		self:        newSelfMetrics(),
 		wantMetrics: sinks.WantsMetrics(),
 		wantLogs:    sinks.WantsLogs(),
 	}
-	if a.wantLogs {
-		a.logColl = mikrotik.NewLogCollector()
+
+	for _, rc := range cfg.Routers {
+		t := &target{
+			name:       rc.Name,
+			client:     mikrotik.New(rc, logger.With("target", rc.Name)),
+			collectors: collectors,
+			self:       newSelfMetrics(),
+		}
+		if a.wantLogs {
+			t.logColl = mikrotik.NewLogCollector()
+		}
+		a.targets = append(a.targets, t)
 	}
 	return a
 }
 
 // Run blocks running the scrape loop until ctx is cancelled. It performs an
-// immediate first scrape, then ticks at cfg.PollInterval. Errors from a single
-// scrape are logged and swallowed so a transient failure does not tear down the
-// agent.
+// immediate first scrape, then ticks at cfg.PollInterval.
 func (a *Agent) Run(ctx context.Context) error {
 	ticker := time.NewTicker(a.cfg.PollInterval)
 	defer ticker.Stop()
 
 	a.logger.Info("agent started",
-		"router", a.cfg.Router.Address,
+		"routers", len(a.targets),
 		"interval", a.cfg.PollInterval,
+		"concurrency", a.cfg.ScrapeConcurrency,
 		"metrics", a.wantMetrics,
 		"logs", a.wantLogs,
 	)
 
-	// Run one scrape immediately so we don't wait a full interval for the
-	// first data point.
-	a.scrape(ctx)
+	// Run one scrape immediately so we don't wait a full interval for data.
+	a.scrapeAll(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			a.logger.Info("agent stopping")
-			return a.client.Close()
+			a.closeAll()
+			return nil
 		case <-ticker.C:
-			a.scrape(ctx)
+			a.scrapeAll(ctx)
 		}
 	}
 }
 
-// scrape performs a single collection + push cycle, bounded by a timeout so a
-// hung router cannot stall the loop.
-func (a *Agent) scrape(ctx context.Context) {
+// closeAll closes every router client.
+func (a *Agent) closeAll() {
+	for _, t := range a.targets {
+		_ = t.client.Close()
+	}
+}
+
+// scrapeAll scrapes every router in parallel (bounded by ScrapeConcurrency),
+// collects the merged samples/logs, and pushes them once. One slow or dead
+// router cannot block the others: each target's collection is independently
+// bounded by a per-scrape timeout.
+func (a *Agent) scrapeAll(ctx context.Context) {
 	budget := a.cfg.PollInterval
 	if budget < 5*time.Second {
 		budget = 5 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
 
-	if a.wantMetrics {
-		a.scrapeMetrics(ctx)
+	type result struct {
+		samples []model.Sample
+		entries []model.LogEntry
 	}
-	if a.wantLogs && a.logColl != nil {
-		a.scrapeLogs(ctx)
+
+	results := make([]result, len(a.targets))
+	sem := make(chan struct{}, a.cfg.ScrapeConcurrency)
+	var wg sync.WaitGroup
+
+	for i, t := range a.targets {
+		wg.Add(1)
+		go func(i int, t *target) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Each target gets its own bounded context so a hung router only
+			// delays itself.
+			tctx, cancel := context.WithTimeout(ctx, budget)
+			defer cancel()
+
+			var r result
+			if a.wantMetrics {
+				r.samples = a.scrapeMetrics(tctx, t)
+			}
+			if a.wantLogs && t.logColl != nil {
+				r.entries = a.scrapeLogs(tctx, t)
+			}
+			results[i] = r
+		}(i, t)
+	}
+	wg.Wait()
+
+	// Merge and push once so a single batch fans out to all sinks.
+	var allSamples []model.Sample
+	var allEntries []model.LogEntry
+	for _, r := range results {
+		allSamples = append(allSamples, r.samples...)
+		allEntries = append(allEntries, r.entries...)
+	}
+
+	if len(allSamples) > 0 {
+		if err := a.sinks.ConsumeMetrics(ctx, allSamples); err != nil {
+			for _, t := range a.targets {
+				t.self.recordMetricExportError()
+			}
+			a.logger.Warn("one or more exporters rejected metrics", "error", err)
+		}
+	}
+	if len(allEntries) > 0 {
+		if err := a.sinks.ConsumeLogs(ctx, allEntries); err != nil {
+			for _, t := range a.targets {
+				t.self.recordLogExportError()
+			}
+			a.logger.Warn("one or more exporters rejected logs", "error", err)
+		}
 	}
 }
 
-func (a *Agent) scrapeMetrics(ctx context.Context) {
+// scrapeMetrics collects one router's metrics, stamps them with its target
+// label, and appends the router's own self-metrics. It returns the samples
+// rather than pushing, so scrapeAll can merge across routers and push once.
+func (a *Agent) scrapeMetrics(ctx context.Context, t *target) []model.Sample {
 	start := time.Now()
 
 	var all []model.Sample
 	routerReached := false
-	for _, coll := range a.collectors {
-		samples, err := coll.Collect(ctx, a.client)
+	for _, coll := range t.collectors {
+		samples, err := coll.Collect(ctx, t.client)
 		if err != nil {
 			a.logger.Warn("collector failed",
-				"collector", coll.Name(), "error", err)
-			a.self.recordCollectorError(coll.Name())
+				"target", t.name, "collector", coll.Name(), "error", err)
+			t.self.recordCollectorError(coll.Name())
 			continue
 		}
-		// A collector that ran without error means the router API was reachable.
 		routerReached = true
 		all = append(all, samples...)
 	}
 
-	// Record the agent's own health for this scrape and append those samples so
-	// they ship with the router metrics. Self-metrics are emitted even when the
-	// router is unreachable so `tiktelemetry.router.up` reports 0 rather than
-	// disappearing.
-	a.self.recordScrape(time.Since(start).Milliseconds(), int64(len(all)), routerReached)
-	all = append(all, a.self.samples()...)
+	// Self-metrics are emitted even when the router is unreachable so
+	// tiktelemetry.router.up reports 0 rather than the series disappearing.
+	t.self.recordScrape(time.Since(start).Milliseconds(), int64(len(all)), routerReached)
+	all = append(all, t.self.samples()...)
 
-	// MultiSink logs per-sink failures itself; surface a joined error here at
-	// warn level so a persistently failing synchronous exporter (Prometheus /
-	// Loki) is visible in the agent's own log, not just the sink's.
-	if err := a.sinks.ConsumeMetrics(ctx, all); err != nil {
-		a.self.recordMetricExportError()
-		a.logger.Warn("one or more exporters rejected metrics", "error", err)
-	}
-	a.logger.Debug("metrics collected", "samples", len(all))
+	stampTarget(all, t.name)
+	a.logger.Debug("metrics collected", "target", t.name, "samples", len(all))
+	return all
 }
 
-func (a *Agent) scrapeLogs(ctx context.Context) {
-	entries, err := a.logColl.Collect(ctx, a.client)
+// scrapeLogs collects one router's new log entries and stamps each with its
+// target name.
+func (a *Agent) scrapeLogs(ctx context.Context, t *target) []model.LogEntry {
+	entries, err := t.logColl.Collect(ctx, t.client)
 	if err != nil {
-		a.self.recordLogCollectError()
-		a.logger.Warn("log collection failed", "error", err)
-		return
+		t.self.recordLogCollectError()
+		a.logger.Warn("log collection failed", "target", t.name, "error", err)
+		return nil
 	}
-	if len(entries) == 0 {
-		return
+	for i := range entries {
+		entries[i].Target = t.name
 	}
-	if err := a.sinks.ConsumeLogs(ctx, entries); err != nil {
-		a.self.recordLogExportError()
-		a.logger.Warn("one or more exporters rejected logs", "error", err)
+	if len(entries) > 0 {
+		a.logger.Debug("logs collected", "target", t.name, "entries", len(entries))
 	}
-	a.logger.Debug("logs collected", "entries", len(entries))
+	return entries
+}
+
+// stampTarget adds the target label to every sample, so a shared backend can
+// distinguish routers. It does not overwrite a target already set by a
+// collector (none do today).
+func stampTarget(samples []model.Sample, target string) {
+	for i := range samples {
+		if samples[i].Attributes == nil {
+			samples[i].Attributes = map[string]string{"target": target}
+			continue
+		}
+		if _, ok := samples[i].Attributes["target"]; !ok {
+			samples[i].Attributes["target"] = target
+		}
+	}
 }

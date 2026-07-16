@@ -17,8 +17,14 @@ import (
 
 // Config is the fully-resolved runtime configuration for the agent.
 type Config struct {
-	// Router holds MikroTik RouterOS API connection settings.
-	Router RouterConfig
+	// Routers is the set of MikroTik devices to scrape. The agent acts as a hub:
+	// it polls every router in parallel and stamps each router's telemetry with
+	// a "target" label (the router Name) so a single backend can distinguish
+	// them. Always contains at least one entry.
+	Routers []RouterConfig
+
+	// ScrapeConcurrency bounds how many routers are scraped in parallel.
+	ScrapeConcurrency int
 
 	// Exporters is the ordered, de-duplicated list of exporter names to enable
 	// (after alias expansion happens in the export package). Populated from the
@@ -30,17 +36,15 @@ type Config struct {
 	// (comma-separated collector names, e.g. "system,interface,health").
 	Collectors []string
 
-	// PollInterval is how often metrics are collected from the router and
+	// PollInterval is how often metrics are collected from the routers and
 	// flushed to the backend(s).
 	PollInterval time.Duration
 
-	// ServiceName / ServiceVersion identify this agent in emitted telemetry.
+	// ServiceName / ServiceVersion identify this agent (the hub) in emitted
+	// telemetry. Individual routers are identified by their per-sample "target"
+	// label, not by ServiceName.
 	ServiceName    string
 	ServiceVersion string
-
-	// InstanceID identifies the specific router/agent pair. Defaults to the
-	// router address when unset. Exported as a label/attribute on all telemetry.
-	InstanceID string
 
 	// LogLevel controls the agent's own structured logging.
 	LogLevel string
@@ -51,8 +55,13 @@ type Config struct {
 	env map[string]string
 }
 
-// RouterConfig describes how to reach the RouterOS API.
+// RouterConfig describes how to reach one RouterOS device.
 type RouterConfig struct {
+	// Name is the target identifier, emitted as the "target" label on every
+	// sample/log from this router so multiple routers are distinguishable in a
+	// shared backend.
+	Name string
+
 	// Address is host:port for the RouterOS API (e.g. 192.168.88.1:8728 for
 	// plaintext, :8729 for API-SSL).
 	Address string
@@ -84,34 +93,26 @@ func Load() (Config, error) {
 	env := currentEnv()
 
 	cfg := Config{
-		Router: RouterConfig{
-			Address:            getEnv(env, "ROUTER_ADDRESS", "192.168.88.1:8728"),
-			Username:           getEnv(env, "ROUTER_USER", "admin"),
-			Password:           env["ROUTER_PASS"],
-			UseTLS:             getBool(env, "ROUTER_TLS", false),
-			InsecureSkipVerify: getBool(env, "ROUTER_TLS_INSECURE", false),
-			DialTimeout:        getDuration(env, "ROUTER_DIAL_TIMEOUT", 5*time.Second),
-			MaxReplyRows:       getInt(env, "ROUTER_MAX_REPLY_ROWS", 10000),
-		},
-		PollInterval:   getDuration(env, "POLL_INTERVAL", 15*time.Second),
-		ServiceName:    getEnv(env, "SERVICE_NAME", "tiktelemetry"),
-		ServiceVersion: getEnv(env, "SERVICE_VERSION", "dev"),
-		InstanceID:     env["INSTANCE_ID"],
-		LogLevel:       getEnv(env, "LOG_LEVEL", "info"),
-		env:            env,
+		ScrapeConcurrency: getInt(env, "ROUTER_SCRAPE_CONCURRENCY", 4),
+		PollInterval:      getDuration(env, "POLL_INTERVAL", 15*time.Second),
+		ServiceName:       getEnv(env, "SERVICE_NAME", "tiktelemetry"),
+		ServiceVersion:    getEnv(env, "SERVICE_VERSION", "dev"),
+		LogLevel:          getEnv(env, "LOG_LEVEL", "info"),
+		env:               env,
 	}
 
-	// EXPORTERS is a comma-separated list. Default to "otlp" to preserve the
-	// original single-OTLP behaviour when unset.
+	// EXPORTERS is a comma-separated list. Default to "otlp".
 	cfg.Exporters = splitList(getEnv(env, "EXPORTERS", "otlp"))
 
 	// COLLECTORS optionally restricts the active metric collectors. Empty means
 	// "all registered collectors".
 	cfg.Collectors = splitList(env["COLLECTORS"])
 
-	if cfg.InstanceID == "" {
-		cfg.InstanceID = cfg.Router.Address
+	routers, err := parseRouters(env)
+	if err != nil {
+		return Config{}, err
 	}
+	cfg.Routers = routers
 
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
@@ -119,15 +120,116 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// parseRouters builds the list of routers to scrape. It accepts either:
+//
+//	ROUTERS=core@192.168.88.1:8728,cap-office@192.168.88.2:8728
+//
+// (a comma-separated list of name@address entries), or, when ROUTERS is unset,
+// a single router from ROUTER_ADDRESS. ROUTER_USER / ROUTER_PASS / ROUTER_TLS /
+// ROUTER_TLS_INSECURE provide shared defaults; any of them can be overridden
+// per router with ROUTER_<NAME>_<FIELD> (NAME upper-cased, non-alphanumerics
+// replaced with '_'), e.g. ROUTER_CAP_OFFICE_PASS.
+func parseRouters(env map[string]string) ([]RouterConfig, error) {
+	defUser := getEnv(env, "ROUTER_USER", "admin")
+	defPass := env["ROUTER_PASS"]
+	defTLS := getBool(env, "ROUTER_TLS", false)
+	defInsecure := getBool(env, "ROUTER_TLS_INSECURE", false)
+	dialTimeout := getDuration(env, "ROUTER_DIAL_TIMEOUT", 5*time.Second)
+	maxRows := getInt(env, "ROUTER_MAX_REPLY_ROWS", 10000)
+
+	type spec struct{ name, address string }
+	var specs []spec
+
+	if raw := strings.TrimSpace(env["ROUTERS"]); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			name, addr, ok := strings.Cut(part, "@")
+			if !ok {
+				return nil, fmt.Errorf("invalid ROUTERS entry %q (want name@host:port)", part)
+			}
+			name = strings.TrimSpace(name)
+			addr = strings.TrimSpace(addr)
+			if name == "" || addr == "" {
+				return nil, fmt.Errorf("invalid ROUTERS entry %q (empty name or address)", part)
+			}
+			specs = append(specs, spec{name, addr})
+		}
+	} else {
+		// Single-router shorthand.
+		addr := getEnv(env, "ROUTER_ADDRESS", "192.168.88.1:8728")
+		name := getEnv(env, "INSTANCE_ID", addr)
+		specs = append(specs, spec{name, addr})
+	}
+
+	seen := map[string]bool{}
+	out := make([]RouterConfig, 0, len(specs))
+	for _, s := range specs {
+		if seen[s.name] {
+			return nil, fmt.Errorf("duplicate router name %q in ROUTERS", s.name)
+		}
+		seen[s.name] = true
+
+		prefix := "ROUTER_" + envKeySegment(s.name) + "_"
+		out = append(out, RouterConfig{
+			Name:               s.name,
+			Address:            s.address,
+			Username:           getEnv(env, prefix+"USER", defUser),
+			Password:           firstNonEmpty(env[prefix+"PASS"], defPass),
+			UseTLS:             getBool(env, prefix+"TLS", defTLS),
+			InsecureSkipVerify: getBool(env, prefix+"TLS_INSECURE", defInsecure),
+			DialTimeout:        dialTimeout,
+			MaxReplyRows:       maxRows,
+		})
+	}
+	return out, nil
+}
+
+// envKeySegment converts a router name into the upper-cased, underscore-safe
+// segment used in per-router override env vars (e.g. "cap-office" -> "CAP_OFFICE").
+func envKeySegment(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r - 'a' + 'A')
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 func (c Config) validate() error {
 	if len(c.Exporters) == 0 {
 		return fmt.Errorf("EXPORTERS must name at least one exporter")
 	}
-	if c.Router.Password == "" {
-		return fmt.Errorf("ROUTER_PASS is required")
+	if len(c.Routers) == 0 {
+		return fmt.Errorf("at least one router must be configured (ROUTERS or ROUTER_ADDRESS)")
 	}
-	// Enforce a floor so a tiny interval cannot hammer the router (each scrape
-	// issues a dozen API commands) or spin the export pipeline.
+	for _, r := range c.Routers {
+		if r.Password == "" {
+			return fmt.Errorf("router %q has no password (set ROUTER_PASS or ROUTER_%s_PASS)",
+				r.Name, envKeySegment(r.Name))
+		}
+	}
+	if c.ScrapeConcurrency < 1 {
+		return fmt.Errorf("ROUTER_SCRAPE_CONCURRENCY must be at least 1, got %d", c.ScrapeConcurrency)
+	}
+	// Enforce a floor so a tiny interval cannot hammer the routers (each scrape
+	// issues a dozen API commands per router) or spin the export pipeline.
 	if c.PollInterval < time.Second {
 		return fmt.Errorf("POLL_INTERVAL must be at least 1s, got %s", c.PollInterval)
 	}

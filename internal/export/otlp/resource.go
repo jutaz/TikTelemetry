@@ -13,11 +13,12 @@ import (
 // newResource builds an OTel resource from the agent's config and merges it
 // with the SDK default resource (which carries telemetry.sdk.* attributes).
 func newResource(ctx context.Context, cfg config.Config) (*resource.Resource, error) {
+	// The resource identifies the agent (hub). Per-router identity travels as
+	// the "target" attribute on each metric/log, added by the collection layer.
 	custom, err := resource.New(ctx,
 		resource.WithAttributes(
 			semconv.ServiceName(cfg.ServiceName),
 			semconv.ServiceVersion(cfg.ServiceVersion),
-			semconv.ServiceInstanceID(cfg.InstanceID),
 		),
 	)
 	if err != nil {

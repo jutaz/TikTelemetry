@@ -70,10 +70,14 @@ func Run(ctx context.Context, cfg config.Config) Report {
 		report.Results = append(report.Results, res)
 	}
 
-	// 1. Router API: connect, authenticate, and run a read-only probe.
-	add("router-api", func(ctx context.Context) (string, error) {
-		return checkRouter(ctx, cfg)
-	})
+	// 1. Router API: connect, authenticate, and run a read-only probe for every
+	// configured router.
+	for _, rc := range cfg.Routers {
+		rc := rc
+		add("router:"+rc.Name, func(ctx context.Context) (string, error) {
+			return checkRouter(ctx, rc)
+		})
+	}
 
 	// 2. Each exporter's endpoint: DNS + TCP (+ TLS) reachability.
 	for _, ep := range exporterEndpoints(cfg) {
@@ -86,34 +90,34 @@ func Run(ctx context.Context, cfg config.Config) Report {
 	return report
 }
 
-// checkRouter connects to the RouterOS API and runs /system/resource/print,
-// returning the board name and version on success.
-func checkRouter(ctx context.Context, cfg config.Config) (string, error) {
+// checkRouter connects to one router's RouterOS API and runs
+// /system/resource/print, returning the board name and version on success.
+func checkRouter(ctx context.Context, rc config.RouterConfig) (string, error) {
 	// Use a discard logger; preflight prints its own report.
-	client := mikrotik.New(cfg.Router, discardLogger())
+	client := mikrotik.New(rc, discardLogger())
 	defer func() { _ = client.Close() }()
 
 	dialCtx := ctx
-	if cfg.Router.DialTimeout > 0 {
+	if rc.DialTimeout > 0 {
 		var cancel context.CancelFunc
-		dialCtx, cancel = context.WithTimeout(ctx, cfg.Router.DialTimeout+2*time.Second)
+		dialCtx, cancel = context.WithTimeout(ctx, rc.DialTimeout+2*time.Second)
 		defer cancel()
 	}
 
 	reply, err := client.Run(dialCtx, "/system/resource/print")
 	if err != nil {
 		return "", fmt.Errorf("cannot reach RouterOS API at %s as user %q: %w (is the API service enabled and the address allow-list correct?)",
-			cfg.Router.Address, cfg.Router.Username, err)
+			rc.Address, rc.Username, err)
 	}
 	if len(reply.Re) == 0 {
-		return fmt.Sprintf("connected to %s (no resource data returned)", cfg.Router.Address), nil
+		return fmt.Sprintf("connected to %s (no resource data returned)", rc.Address), nil
 	}
 	m := reply.Re[0].Map
 	board := m["board-name"]
 	version := m["version"]
 	arch := m["architecture-name"]
 	return fmt.Sprintf("connected to %s — board %q, RouterOS %q, arch %q",
-		cfg.Router.Address, board, version, arch), nil
+		rc.Address, board, version, arch), nil
 }
 
 // endpoint pairs an exporter name with the URL to probe.

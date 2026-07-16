@@ -46,7 +46,6 @@ type lokiSink struct {
 	client      *http.Client
 	logger      *slog.Logger
 	serviceName string
-	instanceID  string
 }
 
 // Name returns the stable identifier "loki".
@@ -73,7 +72,7 @@ func (s *lokiSink) ConsumeLogs(ctx context.Context, entries []model.LogEntry) er
 		return nil
 	}
 
-	body, err := buildPayload(entries, s.serviceName, s.instanceID)
+	body, err := buildPayload(entries, s.serviceName)
 	if err != nil {
 		return fmt.Errorf("loki: build payload: %w", err)
 	}
@@ -116,38 +115,53 @@ type stream struct {
 	Values [][]any           `json:"values"`
 }
 
+// streamKey groups log entries into one Loki stream. Both dimensions are
+// low-cardinality: one router × five severity levels.
+type streamKey struct {
+	target string
+	level  string
+}
+
 // buildPayload assembles the JSON body for a Loki push request from log
-// entries. It groups entries by severity level and sorts each group's entries
-// by timestamp ascending to avoid "too far behind" rejections.
-func buildPayload(entries []model.LogEntry, serviceName, instanceID string) ([]byte, error) {
-	// Group entries by severity level name.
-	groups := make(map[string][]model.LogEntry)
+// entries. It groups entries by (target, severity level) so each router's logs
+// carry a distinct "target" stream label, and sorts each group's entries by
+// timestamp ascending to avoid "too far behind" rejections.
+func buildPayload(entries []model.LogEntry, serviceName string) ([]byte, error) {
+	groups := make(map[streamKey][]model.LogEntry)
 	for _, e := range entries {
-		level := levelNames[e.Severity()]
-		groups[level] = append(groups[level], e)
+		key := streamKey{target: e.Target, level: levelNames[e.Severity()]}
+		groups[key] = append(groups[key], e)
 	}
 
-	// Ensure deterministic iteration over levels.
-	levels := make([]string, 0, len(groups))
-	for l := range groups {
-		levels = append(levels, l)
+	// Deterministic stream ordering.
+	keys := make([]streamKey, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
 	}
-	sort.Strings(levels)
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].target != keys[j].target {
+			return keys[i].target < keys[j].target
+		}
+		return keys[i].level < keys[j].level
+	})
 
-	streams := make([]stream, 0, len(levels))
-	for _, level := range levels {
-		entries := groups[level]
+	streams := make([]stream, 0, len(keys))
+	for _, key := range keys {
+		grp := groups[key]
 
 		// Sort by timestamp ascending within the stream.
-		sort.Slice(entries, func(i, j int) bool {
-			return entries[i].Time.Before(entries[j].Time)
+		sort.Slice(grp, func(i, j int) bool {
+			return grp[i].Time.Before(grp[j].Time)
 		})
 
 		labels := map[string]string{
-			"service":  serviceName,
-			"source":   "mikrotik",
-			"instance": instanceID,
-			"level":    level,
+			"service": serviceName,
+			"source":  "mikrotik",
+			"level":   key.level,
+		}
+		// Only add the target label when set (it always is in normal operation).
+		if key.target != "" {
+			labels["target"] = key.target
 		}
 		// Sanitize label names (the static names above are already valid, but
 		// being explicit keeps this consistent and future-proof).
@@ -156,8 +170,8 @@ func buildPayload(entries []model.LogEntry, serviceName, instanceID string) ([]b
 			sanitized[exporthelp.SanitizeLabelName(k)] = v
 		}
 
-		values := make([][]any, 0, len(entries))
-		for _, e := range entries {
+		values := make([][]any, 0, len(grp))
+		for _, e := range grp {
 			ts := strconv.FormatInt(e.Time.UnixNano(), 10)
 			val := []any{ts, e.Message}
 
@@ -244,6 +258,5 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (export.Si
 		client:      client,
 		logger:      logger,
 		serviceName: cfg.ServiceName,
-		instanceID:  cfg.InstanceID,
 	}, nil
 }
