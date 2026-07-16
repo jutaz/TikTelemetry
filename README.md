@@ -643,9 +643,15 @@ RouterOS containers are minimal (no compose, no healthchecks, spartan networking
    | hEX S (2025) | E60iUGS | 2025 model; **not** the older MMIPS RB760iGS |
    | hAP ax lite / hAP ax² S family | varies | same EN7562CT SoC where present |
 
-   > The **original hEX S (RB760iGS)** is a different, older board: it is **MMIPS** (MediaTek MT7621), which does **not** support containers at all — neither image applies.
+   > The **original hEX S (RB760iGS)** is a different, older board: it is **MMIPS** (MediaTek MT7621), which does **not** support containers at all — neither image applies. See below.
 
    If `cpu` shows `EN7562CT`, use the `-armv5` image/tarball. Every other `arm` board uses the default `arm` image. When in doubt, run the [preflight](#5-verify-the-configuration) — `tiktelemetry --check` prints the board’s architecture it detected.
+
+   #### MIPS boards (`mipsbe` / `mmips` / `smips`): monitor them off-router
+
+   RouterOS's `container` feature is **not** available on any MIPS architecture — MikroTik only builds `container.npk` for `arm`, `arm64`, and `x86`. This is a hard limitation (no container package, tiny internal flash, and no 32-bit MIPS container ecosystem), and RouterOS is a closed platform with no way to run a raw binary either. So you **cannot** run TikTelemetry *on* a MIPS board — common examples: the original **hEX S (RB760iGS)**, **hAP ac²**, **RB750Gr3**, and most `mipsbe`/`smips` boards.
+
+   That does not mean those routers can't be monitored. The RouterOS **API works on every architecture**, so run one TikTelemetry agent on any container-capable host — a Raspberry Pi, a small VM, or one of your `arm`/`arm64`/`x86` MikroTik boards — and point it at the MIPS routers over the network. This is exactly the [multi-router hub](#monitoring-multiple-routers) model: the MIPS boards just need the API user (run [`routeros-setup.rsc`](scripts/routeros-setup.rsc) on each) and network reachability; nothing is installed on them.
 
 2. **The `container` package**, installed for your architecture and the router rebooted. It ships in the "extra packages" archive on the MikroTik download page (it is *not* in the main package). On RouterOS 7.18+ apply it with `/system/package/apply-changes`; on older versions a normal reboot is correct. Verify with `/container/config/print`.
 

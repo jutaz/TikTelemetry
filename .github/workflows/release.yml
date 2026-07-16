@@ -141,11 +141,16 @@ jobs:
     strategy:
       matrix:
         include:
+          # arm/v6 (GOARM=6): the vast majority of MikroTik 32-bit ARM boards
+          # (they have an FPU). Named "arm" to match the short arch label.
           - arch: arm
             platform: linux/arm/v6
-          # ARMv5 for the FPU-less EN7562CT boards (hEX Refresh, hEX S 2025).
-          # A separate tarball because RouterOS ignores the OCI variant, so
-          # those users must import this file explicitly.
+          # arm/v5 (GOARM=5, soft float): ONLY the FPU-less EN7562CT boards
+          # (hEX Refresh, hEX S 2025). A separate tarball because RouterOS
+          # ignores the OCI variant field, so those users import this file
+          # explicitly. NOTE: MIPS boards (mipsbe/mmips/smips, e.g. the older
+          # hEX S RB760iGS) cannot run containers at all — monitor them
+          # off-router via the API. There is deliberately no MIPS tarball.
           - arch: armv5
             platform: linux/arm/v5
           - arch: arm64
