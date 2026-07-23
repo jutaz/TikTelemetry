@@ -59,7 +59,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
@@ -163,7 +163,7 @@ jobs:
           ref: ${{ needs.prepare.outputs.tag }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
