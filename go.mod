@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/go-routeros/routeros/v3 v3.0.1
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.19.1
 	github.com/moby/moby/api v1.55.0
 	github.com/testcontainers/testcontainers-go v0.43.0
 	go.opentelemetry.io/otel v1.44.0
