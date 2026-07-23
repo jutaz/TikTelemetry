@@ -83,7 +83,7 @@ jobs:
             type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
       - name: Build and push (multi-arch)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # arm/v6, not arm/v7: the arm binary is built GOARM=6 for MikroTik
@@ -120,7 +120,7 @@ jobs:
             type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
 
       - name: Build and push (armv5, EN7562CT / hEX Refresh & hEX S 2025)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # linux/arm/v5 -> the Dockerfile maps TARGETVARIANT=v5 to GOARM=5,
