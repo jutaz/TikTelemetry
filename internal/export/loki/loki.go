@@ -8,7 +8,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -94,12 +93,7 @@ func (s *lokiSink) ConsumeLogs(ctx context.Context, entries []model.LogEntry) er
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("loki: push returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	return exporthelp.CheckResponse("loki: push", resp)
 }
 
 // --- Payload construction (pure, testable) ---------------------------------
