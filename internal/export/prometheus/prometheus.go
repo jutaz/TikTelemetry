@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -67,8 +66,8 @@ func (p *prometheusSink) ConsumeMetrics(ctx context.Context, samples []model.Sam
 	tsList := make([]timeSeries, 0, len(samples))
 
 	for _, smpl := range samples {
-		// Pre-allocate for: __name__ + N attributes + service + instance.
-		labels := make([]label, 0, 2+len(smpl.Attributes)+2)
+		// Pre-allocate for: __name__ + N attributes + service.
+		labels := make([]label, 0, len(smpl.Attributes)+2)
 
 		// Metric name carried as the special __name__ label (Prometheus convention).
 		labels = append(labels, label{
@@ -136,12 +135,7 @@ func (p *prometheusSink) ConsumeMetrics(ctx context.Context, samples []model.Sam
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("prometheus: remote_write returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	return nil
+	return exporthelp.CheckResponse("prometheus: remote_write", resp)
 }
 
 // New is the export.Factory for the "prometheus" sink.

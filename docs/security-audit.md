@@ -158,10 +158,21 @@ change router configuration.
 
 **A2/A1.** On a non-2xx push, the **Prometheus** and **Loki** exporters (which
 speak HTTP directly) include the response body in the returned error, read
-through `io.LimitReader(resp.Body, 1024)`
-([Prometheus](../internal/export/prometheus/prometheus.go#sym:fn:ConsumeMetrics),
-Loki), so a hostile endpoint cannot force an unbounded read into an error string.
-The body is backend-controlled, not credential-bearing.
+through `io.LimitReader(resp.Body, 1024)`. Both go through one shared helper,
+[`CheckResponse`](../internal/export/exporthelp/exporthelp.go#sym:fn:CheckResponse),
+so a hostile endpoint cannot force an unbounded read into an error string. The
+body is backend-controlled, not credential-bearing.
+
+`CheckResponse` also drains the body before the caller closes it, so `net/http`
+can reuse the connection instead of handshaking afresh on every push. This is
+the one place the agent reads a body it does not need, so it is bounded twice
+over: by `maxDrainBytes` (4 KiB, and skipped entirely when `Content-Length`
+already exceeds it), and by the sinks' `http.Client.Timeout` of 30s, which
+covers body reads as well as the round-trip. A backend that answers a *success*
+and then trickles bytes therefore delays a single push by at most that timeout —
+it cannot stall the agent indefinitely — and the bytes are discarded rather than
+retained. Note this is a cost the error path already carried, since quoting the
+body into the error requires reading it.
 
 The **OTLP** exporter does *not* do its own HTTP handling — all transport is
 delegated to the OpenTelemetry SDK (`otlpmetrichttp` / `otlploghttp`), so the
