@@ -13,7 +13,7 @@
 # need a target-arch toolchain image — which matters because golang:alpine has
 # no armv5 variant (the EN7562CT / hEX Refresh target). This also avoids running
 # the compile under QEMU emulation, so arm builds are much faster.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 
 RUN apk add --no-cache ca-certificates git
 
