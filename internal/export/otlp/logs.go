@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -57,15 +58,15 @@ func (l *logsPipeline) consumeLogs(ctx context.Context, entries []model.LogEntry
 		sev := levelToSeverity(entry.Severity())
 		r.SetSeverity(sev)
 		r.SetSeverityText(severityText(entry.Severity()))
-		r.SetBody(log.StringValue(entry.Message))
-		attrs := []log.KeyValue{
-			log.String("topics", strings.Join(entry.Topics, ",")),
-			log.String("source", "mikrotik"),
+		r.SetBody(attribute.StringValue(entry.Message))
+		attrs := []attribute.KeyValue{
+			attribute.String("topics", strings.Join(entry.Topics, ",")),
+			attribute.String("source", "mikrotik"),
 		}
 		// target distinguishes which router the log came from in a multi-router
 		// hub deployment (parity with the Loki exporter's target stream label).
 		if entry.Target != "" {
-			attrs = append(attrs, log.String("target", entry.Target))
+			attrs = append(attrs, attribute.String("target", entry.Target))
 		}
 		r.AddAttributes(attrs...)
 		l.logger.Emit(ctx, r)
